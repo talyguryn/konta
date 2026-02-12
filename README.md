@@ -1,7 +1,5 @@
 # Konta - GitOps for Docker Compose
 
-<img src="docs/logo.svg" width="200" alt="Konta Logo"/>
-
 **GitOps for Docker Compose** — A lightweight, idempotent deployment system for single-node servers.
 
 Keep your infrastructure in Git. Deploy automatically. Stay simple.
