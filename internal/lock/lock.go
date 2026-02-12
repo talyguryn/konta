@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"syscall"
 
 	"github.com/talyguryn/konta/internal/logger"
 )
@@ -43,10 +42,10 @@ func Acquire() (*FileLock, error) {
 	}
 
 	// Try to acquire the lock
-	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+	if err := acquireLock(file.Fd()); err != nil {
 		_ = file.Close()
 		logger.Warn("Another Konta instance is running")
-		return nil, fmt.Errorf("failed to acquire lock: another instance is running")
+		return nil, err
 	}
 
 	logger.Debug("Lock acquired")
@@ -59,8 +58,8 @@ func (fl *FileLock) Release() error {
 		return nil
 	}
 
-	if err := syscall.Flock(int(fl.file.Fd()), syscall.LOCK_UN); err != nil {
-		return fmt.Errorf("failed to release lock: %w", err)
+	if err := releaseLock(fl.file.Fd()); err != nil {
+		return err
 	}
 
 	if err := fl.file.Close(); err != nil {
