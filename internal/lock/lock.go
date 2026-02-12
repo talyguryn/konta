@@ -21,8 +21,8 @@ func init() {
 		}
 		lockPath = filepath.Join(homeDir, ".konta", "konta.lock")
 	} else {
-		f.Close()
-		os.Remove(lockPath)
+		_ = f.Close()
+		_ = os.Remove(lockPath)
 	}
 }
 
@@ -44,7 +44,7 @@ func Acquire() (*FileLock, error) {
 
 	// Try to acquire the lock
 	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		file.Close()
+		_ = file.Close()
 		logger.Warn("Another Konta instance is running")
 		return nil, fmt.Errorf("failed to acquire lock: another instance is running")
 	}

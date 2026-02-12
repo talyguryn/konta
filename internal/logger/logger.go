@@ -77,7 +77,7 @@ func Error(format string, v ...interface{}) {
 func Fatal(format string, v ...interface{}) {
 	msg := fmt.Sprintf(format, v...)
 	logMessage("FATAL", msg)
-	Close()
+	_ = Close()
 	os.Exit(1)
 }
 

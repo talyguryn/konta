@@ -181,8 +181,8 @@ func Uninstall() error {
 
 	// 1. Stop and disable systemd service
 	fmt.Println("1. Stopping Konta daemon...")
-	exec.Command("systemctl", "stop", "konta").Run()
-	exec.Command("systemctl", "disable", "konta").Run()
+	_ = exec.Command("systemctl", "stop", "konta").Run()
+	_ = exec.Command("systemctl", "disable", "konta").Run()
 
 	servicePath := "/etc/systemd/system/konta.service"
 	if _, err := os.Stat(servicePath); err == nil {
@@ -191,7 +191,7 @@ func Uninstall() error {
 		} else {
 			fmt.Printf("   ✓ Removed systemd service\n")
 		}
-		exec.Command("systemctl", "daemon-reload").Run()
+		_ = exec.Command("systemctl", "daemon-reload").Run()
 	} else {
 		fmt.Println("   (daemon not installed)")
 	}
@@ -207,7 +207,7 @@ func Uninstall() error {
 			fmt.Printf("   Found %d containers\n", len(containerIDs))
 			stopCmd := exec.Command("docker", "stop")
 			stopCmd.Args = append(stopCmd.Args, containerIDs...)
-			stopCmd.Run()
+			_ = stopCmd.Run()
 
 			rmCmd := exec.Command("docker", "rm")
 			rmCmd.Args = append(rmCmd.Args, containerIDs...)
@@ -292,7 +292,7 @@ func Update(currentVersion string) error {
 	if err != nil {
 		return fmt.Errorf("failed to check for updates: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != 200 {
 		return fmt.Errorf("GitHub API returned status %d", resp.StatusCode)
@@ -356,7 +356,7 @@ func Update(currentVersion string) error {
 	if err != nil {
 		return fmt.Errorf("download failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != 200 {
 		return fmt.Errorf("download returned status %d", resp.StatusCode)
@@ -376,34 +376,37 @@ func Update(currentVersion string) error {
 	}
 
 	_, err = io.Copy(out, resp.Body)
-	out.Close()
+	if closeErr := out.Close(); closeErr != nil {
+		_ = os.Remove(tmpFile)
+		return fmt.Errorf("failed to close temp file: %v", closeErr)
+	}
 	if err != nil {
-		os.Remove(tmpFile)
+		_ = os.Remove(tmpFile)
 		return fmt.Errorf("download failed: %v", err)
 	}
 
 	// Make executable
 	if err := os.Chmod(tmpFile, 0755); err != nil {
-		os.Remove(tmpFile)
+		_ = os.Remove(tmpFile)
 		return fmt.Errorf("failed to set permissions: %v", err)
 	}
 
 	// Backup current binary
 	backupPath := exePath + ".backup"
 	if err := os.Rename(exePath, backupPath); err != nil {
-		os.Remove(tmpFile)
+		_ = os.Remove(tmpFile)
 		return fmt.Errorf("failed to backup current binary: %v", err)
 	}
 
 	// Move new binary to place
 	if err := os.Rename(tmpFile, exePath); err != nil {
 		// Try to restore backup
-		os.Rename(backupPath, exePath)
+		_ = os.Rename(backupPath, exePath)
 		return fmt.Errorf("failed to install new binary: %v", err)
 	}
 
 	// Remove backup
-	os.Remove(backupPath)
+	_ = os.Remove(backupPath)
 
 	fmt.Printf("\n✅ Updated to v%s successfully!\n", latestVersion)
 	fmt.Println("\nIf you have the daemon running, restart it:")
@@ -452,7 +455,7 @@ func reconcileOnce(dryRun bool) error {
 	if err != nil {
 		return err
 	}
-	defer l.Release()
+	defer func() { _ = l.Release() }()
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -472,7 +475,7 @@ func reconcileOnce(dryRun bool) error {
 
 	// Clone/update the repository
 	releaseDir := filepath.Join(state.GetReleasesDir(), "temp-"+time.Now().Format("20060102150405"))
-	defer os.RemoveAll(releaseDir)
+	defer func() { _ = os.RemoveAll(releaseDir) }()
 
 	newCommit, err := git.Clone(&cfg.Repository, releaseDir)
 	if err != nil {
@@ -508,7 +511,7 @@ func reconcileOnce(dryRun bool) error {
 	// Run pre-hook
 	if err := hookRunner.RunPre(); err != nil {
 		logger.Error("Pre-hook failed: %v", err)
-		hookRunner.RunFailure()
+		_ = hookRunner.RunFailure()
 		return err
 	}
 
@@ -516,7 +519,7 @@ func reconcileOnce(dryRun bool) error {
 	reconciler := reconcile.New(cfg, releaseDir, dryRun)
 	if err := reconciler.Reconcile(); err != nil {
 		logger.Error("Reconciliation failed: %v", err)
-		hookRunner.RunFailure()
+		_ = hookRunner.RunFailure()
 		return err
 	}
 
@@ -524,7 +527,7 @@ func reconcileOnce(dryRun bool) error {
 	if !dryRun {
 		if err := atomicSwitch(newCommit, releaseDir); err != nil {
 			logger.Error("Atomic switch failed: %v", err)
-			hookRunner.RunFailure()
+			_ = hookRunner.RunFailure()
 			return err
 		}
 
@@ -581,7 +584,7 @@ func atomicSwitch(commit string, releaseDir string) error {
 	// If target already exists (idempotent), just update symlink
 	if _, err := os.Stat(targetDir); err == nil {
 		// Target exists, just ensure symlink points to it
-		os.Remove(currentLink)
+		_ = os.Remove(currentLink)
 		if err := os.Symlink(targetDir, currentLink); err != nil {
 			return fmt.Errorf("failed to create symlink: %w", err)
 		}
@@ -595,7 +598,7 @@ func atomicSwitch(commit string, releaseDir string) error {
 	}
 
 	// Remove old symlink if it exists
-	os.Remove(currentLink)
+	_ = os.Remove(currentLink)
 
 	// Create new symlink
 	if err := os.Symlink(targetDir, currentLink); err != nil {
@@ -743,7 +746,7 @@ func daemonStatus(serviceName string) error {
 		getStatusCmd := exec.Command("systemctl", "status", serviceName, "--no-pager")
 		getStatusCmd.Stdout = os.Stdout
 		getStatusCmd.Stderr = os.Stderr
-		getStatusCmd.Run()
+		_ = getStatusCmd.Run()
 	} else {
 		fmt.Printf("⚠️  Konta daemon is %s\n", status)
 	}

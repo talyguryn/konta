@@ -12,8 +12,7 @@ import (
 )
 
 var (
-	stateDir  string
-	statePath string
+	stateDir string
 )
 
 // getStateDir returns the state directory, creating fallback path if needed
@@ -29,8 +28,8 @@ func getStateDir() string {
 		// /var/lib exists, check if we can write to it
 		testFile := filepath.Join(primaryParent, ".konta_test")
 		if f, err := os.Create(testFile); err == nil {
-			f.Close()
-			os.Remove(testFile)
+			_ = f.Close()
+			_ = os.Remove(testFile)
 			stateDir = primaryPath
 			return stateDir
 		}

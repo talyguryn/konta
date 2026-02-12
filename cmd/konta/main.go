@@ -54,9 +54,10 @@ func main() {
 		dryRun := false
 		watch := false
 		for _, arg := range args {
-			if arg == "--dry-run" {
+			switch arg {
+			case "--dry-run":
 				dryRun = true
-			} else if arg == "--watch" {
+			case "--watch":
 				watch = true
 			}
 		}
