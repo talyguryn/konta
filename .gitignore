@@ -1,0 +1,36 @@
+# Go
+bin
+dist/
+*.o
+*.a
+*.so
+.DS_Store
+vendor/
+
+# Build artifacts
+/bin/
+/dist/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Environment
+.env
+.env.local
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test coverage
+*.out
+coverage.txt
+
+# Temporary
+temp/
+tmp/
