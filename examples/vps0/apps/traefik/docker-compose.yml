@@ -1,0 +1,55 @@
+version: "3.8"
+
+# Traefik: Reverse proxy + SSL/TLS
+# Automatically routes traffic to other containers
+# Handles SSL certificates with Let's Encrypt
+
+services:
+  traefik:
+    image: traefik:v2.10-alpine
+
+    # Listen on HTTP/HTTPS
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8080:8080" # Traefik dashboard
+
+    environment:
+      # Let's Encrypt email for SSL certificates
+      - TRAEFIK_ACME_EMAIL=admin@example.com
+
+    volumes:
+      # Docker socket for reading labels
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+      # SSL certificates storage
+      - ./acme.json:/acme.json
+
+      # Traefik configuration file
+      - ./traefik.yml:/traefik.yml:ro
+
+    # Traefik configuration via CLI
+    command:
+      - "--configFile=/traefik.yml"
+      - "--api.insecure=true"
+      - "--api.dashboard=true"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--certificatesresolvers.letsencrypt.acme.httpchallenge=true"
+      - "--certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web"
+      - "--certificatesresolvers.letsencrypt.acme.email=admin@example.com"
+      - "--certificatesresolvers.letsencrypt.acme.storage=/acme.json"
+
+    networks:
+      - traefik
+
+    restart: unless-stopped
+
+networks:
+  traefik:
+    driver: bridge
+
+volumes:
+  acme:

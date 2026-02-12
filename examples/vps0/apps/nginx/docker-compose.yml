@@ -1,0 +1,43 @@
+version: "3.8"
+
+# Nginx: Web server
+# Serves static content and is proxied through Traefik
+# Accessible at: http://example.com (via Traefik)
+
+services:
+  nginx:
+    image: nginx:1.25-alpine
+
+    # Expose the service container only (Traefik handles outside traffic)
+    networks:
+      - web
+
+    # Mount website content
+    volumes:
+      - ./html:/usr/share/nginx/html:ro
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+
+    # Labels for Traefik routing
+    labels:
+      # Mark this container as managed by Konta
+      konta.managed: "true"
+
+      # Enable Traefik for this service
+      traefik.enable: "true"
+      traefik.http.routers.nginx.rule: "Host(`example.com`)"
+      traefik.http.routers.nginx.entrypoints: "web,websecure"
+
+      # SSL/TLS configuration
+      traefik.http.routers.nginx.tls: "true"
+      traefik.http.routers.nginx.tls.certresolver: "letsencrypt"
+
+      # Service configuration
+      traefik.http.services.nginx.loadbalancer.server.port: "80"
+
+    restart: unless-stopped
+
+networks:
+  web:
+    driver: bridge
+    external: true
+    name: traefik_traefik # Use same network as Traefik

@@ -1,0 +1,116 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build and Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.21"
+
+      - name: Get version from tag
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Build binaries
+        run: |
+          mkdir -p dist
+
+          # Linux AMD64
+          GOOS=linux GOARCH=amd64 go build -ldflags "-s -w" -o dist/konta-linux ./cmd/konta
+
+          # Linux ARM64
+          GOOS=linux GOARCH=arm64 go build -ldflags "-s -w" -o dist/konta-linux-arm64 ./cmd/konta
+
+          # macOS AMD64 (Intel)
+          GOOS=darwin GOARCH=amd64 go build -ldflags "-s -w" -o dist/konta-darwin-amd64 ./cmd/konta
+
+          # macOS ARM64 (Apple Silicon)
+          GOOS=darwin GOARCH=arm64 go build -ldflags "-s -w" -o dist/konta-darwin-arm64 ./cmd/konta
+
+          # Windows AMD64
+          GOOS=windows GOARCH=amd64 go build -ldflags "-s -w" -o dist/konta-windows-amd64.exe ./cmd/konta
+
+          # Make binaries executable
+          chmod +x dist/konta-*
+
+          # List built binaries
+          ls -lh dist/
+
+      - name: Create checksums
+        run: |
+          cd dist
+          sha256sum konta-* > checksums.txt
+          cat checksums.txt
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Release ${{ steps.get_version.outputs.VERSION }}
+          body: |
+            ## Konta ${{ steps.get_version.outputs.VERSION }}
+
+            ### Installation
+
+            **Linux (AMD64):**
+            ```bash
+            curl -L https://github.com/talyguryn/konta/releases/download/${{ steps.get_version.outputs.VERSION }}/konta-linux -o konta
+            chmod +x konta
+            sudo mv konta /usr/local/bin/
+            ```
+
+            **macOS (Apple Silicon):**
+            ```bash
+            curl -L https://github.com/talyguryn/konta/releases/download/${{ steps.get_version.outputs.VERSION }}/konta-darwin-arm64 -o konta
+            chmod +x konta
+            sudo mv konta /usr/local/bin/
+            ```
+
+            **macOS (Intel):**
+            ```bash
+            curl -L https://github.com/talyguryn/konta/releases/download/${{ steps.get_version.outputs.VERSION }}/konta-darwin-amd64 -o konta
+            chmod +x konta
+            sudo mv konta /usr/local/bin/
+            ```
+
+            ### Update existing installation
+
+            ```bash
+            konta update
+            ```
+
+            ### What's Changed
+
+            See [CHANGELOG.md](https://github.com/talyguryn/konta/blob/main/CHANGELOG.md) for details.
+
+            ### Checksums
+
+            ```
+            $(cat dist/checksums.txt)
+            ```
+          files: |
+            dist/konta-linux
+            dist/konta-linux-arm64
+            dist/konta-darwin-amd64
+            dist/konta-darwin-arm64
+            dist/konta-windows-amd64.exe
+            dist/checksums.txt
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

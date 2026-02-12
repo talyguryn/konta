@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Welcome to example.com</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .container {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            padding: 60px;
+            max-width: 600px;
+            text-align: center;
+        }
+
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 2.5em;
+        }
+
+        .subtitle {
+            color: #666;
+            font-size: 1.2em;
+            margin-bottom: 30px;
+        }
+
+        .status {
+            background: #4CAF50;
+            color: white;
+            padding: 15px 30px;
+            border-radius: 8px;
+            display: inline-block;
+            margin-bottom: 30px;
+            font-weight: bold;
+        }
+
+        .info {
+            background: #f5f5f5;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 30px;
+            text-align: left;
+        }
+
+        .info p {
+            color: #555;
+            margin: 10px 0;
+            font-family: monospace;
+            font-size: 0.9em;
+        }
+
+        .links {
+            margin-top: 40px;
+        }
+
+        .links a {
+            display: inline-block;
+            margin: 10px;
+            padding: 12px 24px;
+            background: #667eea;
+            color: white;
+            text-decoration: none;
+            border-radius: 8px;
+            transition: background 0.3s;
+            font-weight: 500;
+        }
+
+        .links a:hover {
+            background: #764ba2;
+        }
+
+        .timestamp {
+            color: #999;
+            font-size: 0.9em;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎉 Welcome!</h1>
+        <p class="subtitle">Your Konta deployment is working</p>
+
+        <div class="status">✅ All Systems Operational</div>
+
+        <div class="info">
+            <p><strong>Domain:</strong> example.com</p>
+            <p><strong>Powered by:</strong> Konta GitOps</p>
+            <p><strong>Deployment:</strong> Automated via Git</p>
+            <p><strong>SSL:</strong> Let's Encrypt (automatic)</p>
+        </div>
+
+        <p style="color: #666; margin-bottom: 30px;">
+            This page is served by Nginx through Traefik reverse proxy.
+        </p>
+
+        <div class="links">
+            <a href="https://whoami.example.com">🔗 Test Whoami Service</a>
+            <a href="https://traefik.example.com:8080/dashboard/">📊 Traefik Dashboard</a>
+        </div>
+
+        <div style="background: #fff3cd; border: 1px solid #ffc107; border-radius: 8px; padding: 15px; margin-top: 30px; color: #856404;">
+            <p><strong>⚠️ Note:</strong> Update this HTML file by editing <code>vps0/apps/nginx/html/index.html</code> in your Git repository.</p>
+        </div>
+
+        <p class="timestamp">Last updated: <span id="timestamp"></span></p>
+    </div>
+
+    <script>
+        // Show current date/time
+        const now = new Date();
+        document.getElementById('timestamp').textContent = now.toLocaleString();
+    </script>
+</body>
+</html>

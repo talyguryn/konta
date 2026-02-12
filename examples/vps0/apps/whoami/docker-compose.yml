@@ -1,0 +1,36 @@
+version: "3.8"
+
+# Whoami: Test application
+# Simple service that echoes request information
+# Useful for testing Traefik routing
+# Accessible at: http://whoami.example.com (via Traefik)
+
+services:
+  whoami:
+    image: traefik/whoami:v1.8.0
+
+    networks:
+      - web
+
+    # Labels for Traefik routing
+    labels:
+      # Enable Traefik routing
+      traefik.enable: "true"
+
+      # Route traffic for whoami.example.com to this service
+      traefik.http.routers.whoami.rule: "Host(`whoami.example.com`)"
+      traefik.http.routers.whoami.entrypoints: "web,websecure"
+
+      # SSL configuration (optional for test app)
+      traefik.http.routers.whoami.tls: "false"
+
+      # Service configuration
+      traefik.http.services.whoami.loadbalancer.server.port: "80"
+
+    restart: unless-stopped
+
+networks:
+  web:
+    driver: bridge
+    external: true
+    name: traefik_traefik # Share network with Traefik
