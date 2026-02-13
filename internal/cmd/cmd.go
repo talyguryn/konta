@@ -798,6 +798,17 @@ func reconcileOnce(dryRun bool, version string) error {
 			lastCommitStr = lastCommitStr[:8]
 		}
 		logger.Info("No changes detected (current: %s)", lastCommitStr)
+		
+		// Even without changes, perform health check to ensure containers are running
+		logger.Info("Performing container health check")
+		if !dryRun {
+			reconciler := reconcile.New(cfg, releaseDir, dryRun)
+			reconciler.SetChangedProjects(nil) // nil means check all projects
+			if _, err := reconciler.HealthCheck(); err != nil {
+				logger.Warn("Health check encountered issues: %v", err)
+				// Don't return error, just warn
+			}
+		}
 		return nil
 	}
 

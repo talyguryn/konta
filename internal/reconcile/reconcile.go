@@ -133,6 +133,44 @@ func (r *Reconciler) Reconcile() ([]string, error) {
 	return reconciledProjects, nil
 }
 
+// HealthCheck ensures all desired containers are running (used when no code changes detected)
+func (r *Reconciler) HealthCheck() ([]string, error) {
+	logger.Info("Starting container health check")
+
+	// Get desired projects from git
+	desired, err := r.getDesiredProjects()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get desired projects: %w", err)
+	}
+
+	logger.Debug("Checking health of %d desired projects", len(desired))
+
+	// Track which projects were started
+	startedProjects := []string{}
+
+	// Check if all desired projects have their containers running
+	for _, project := range desired {
+		hasStoppedContainers, err := r.hasStoppedContainers(project)
+		if err != nil {
+			logger.Warn("Failed to check containers for project %s: %v", project, err)
+			continue
+		}
+
+		if hasStoppedContainers {
+			logger.Info("Project %s has stopped containers, starting them", project)
+			if err := r.startProject(project); err != nil {
+				logger.Warn("Failed to start project %s: %v", project, err)
+				// Don't return error, just warn - let other projects continue
+			} else {
+				startedProjects = append(startedProjects, project)
+			}
+		}
+	}
+
+	logger.Info("Health check complete")
+	return startedProjects, nil
+}
+
 func (r *Reconciler) getDesiredProjects() ([]string, error) {
 	entries, err := os.ReadDir(r.appsDir)
 	if err != nil {
@@ -184,6 +222,17 @@ func (r *Reconciler) reconcileProject(project string) error {
 	if r.dryRun {
 		logger.Info("[DRY-RUN] Would run docker compose for %s", project)
 		return nil
+	}
+
+	// Check if this project should be stopped
+	shouldStop, err := r.shouldProjectBeStopped(project)
+	if err != nil {
+		logger.Warn("Failed to check if project should be stopped: %v", err)
+	}
+
+	if shouldStop {
+		logger.Info("Project %s marked to be stopped, stopping containers", project)
+		return r.stopProject(project)
 	}
 
 	cmd := exec.Command(
@@ -318,6 +367,7 @@ func (r *Reconciler) downProject(project string) error {
 }
 
 // hasStoppedContainers checks if a project has any stopped containers
+// Ignores containers marked with konta.stopped=true
 func (r *Reconciler) hasStoppedContainers(project string) (bool, error) {
 	composePath := filepath.Join(r.appsDir, project, "docker-compose.yml")
 
@@ -326,26 +376,64 @@ func (r *Reconciler) hasStoppedContainers(project string) (bool, error) {
 		return false, err
 	}
 
-	// Check for stopped containers with konta.managed label
-	cmd := exec.Command(
+	// First, handle containers marked with konta.stopped=true - stop them if running
+	stopCmd := exec.Command(
+		"docker", "ps",
+		"--filter", fmt.Sprintf("label=com.docker.compose.project=%s", project),
+		"--filter", "label=konta.managed=true",
+		"--filter", "label=konta.stopped=true",
+		"--filter", "status=running",
+		"--format", "{{.ID}}",
+	)
+
+	output, err := stopCmd.Output()
+	if err == nil && len(strings.TrimSpace(string(output))) > 0 {
+		// Found running containers marked to be stopped
+		containers := strings.Split(strings.TrimSpace(string(output)), "\n")
+		for _, containerID := range containers {
+			if containerID != "" {
+				logger.Info("Stopping container marked with konta.stopped=true: %s", containerID[:12])
+				if !r.dryRun {
+					doStopCmd := exec.Command("docker", "stop", containerID)
+					if err := doStopCmd.Run(); err != nil {
+						logger.Warn("Failed to stop container %s: %v", containerID[:12], err)
+					}
+				}
+			}
+		}
+	}
+
+	// Check for stopped containers that should be running (excluding konta.stopped=true)
+	checkCmd := exec.Command(
 		"docker", "ps",
 		"-a",
 		"--filter", fmt.Sprintf("label=com.docker.compose.project=%s", project),
 		"--filter", "label=konta.managed=true",
 		"--filter", "status=exited",
-		"--format", "{{.ID}}",
+		"--format", "{{.ID}}|{{.Label \"konta.stopped\"}}",
 	)
 
-	output, err := cmd.Output()
+	output, err = checkCmd.Output()
 	if err != nil {
 		// If command fails, assume no stopped containers
 		return false, nil
 	}
 
-	return len(strings.TrimSpace(string(output))) > 0, nil
+	// Check if any exited containers don't have konta.stopped=true
+	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+		if line == "" {
+			continue
+		}
+		parts := strings.Split(line, "|")
+		if len(parts) > 1 && parts[1] != "true" {
+			// Found a stopped container that should be running
+			return true, nil
+		}
+	}
+
+	return false, nil
 }
 
-// startProject starts all containers for a project
 func (r *Reconciler) startProject(project string) error {
 	composePath := filepath.Join(r.appsDir, project, "docker-compose.yml")
 
@@ -373,6 +461,51 @@ func (r *Reconciler) startProject(project string) error {
 	}
 
 	logger.Info("Project %s started successfully", project)
+	return nil
+}
+
+// shouldProjectBeStopped checks if any containers in the project have konta.stopped=true
+func (r *Reconciler) shouldProjectBeStopped(project string) (bool, error) {
+	// Check if any containers are marked with konta.stopped=true
+	cmd := exec.Command(
+		"docker", "ps",
+		"-a",
+		"--filter", fmt.Sprintf("label=com.docker.compose.project=%s", project),
+		"--filter", "label=konta.managed=true",
+		"--filter", "label=konta.stopped=true",
+		"--format", "{{.ID}}",
+	)
+
+	output, err := cmd.Output()
+	if err != nil {
+		return false, nil
+	}
+
+	// If we found containers marked to be stopped, project should be stopped
+	return len(strings.TrimSpace(string(output))) > 0, nil
+}
+
+// stopProject stops all containers for a project
+func (r *Reconciler) stopProject(project string) error {
+	if r.dryRun {
+		logger.Info("[DRY-RUN] Would stop containers for project %s", project)
+		return nil
+	}
+
+	cmd := exec.Command(
+		"docker", "compose",
+		"-p", project,
+		"stop",
+	)
+
+	cmd.Stdout = os.Stderr
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to stop project %s: %w", project, err)
+	}
+
+	logger.Info("Project %s stopped successfully", project)
 	return nil
 }
 
