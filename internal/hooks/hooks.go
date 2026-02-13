@@ -70,8 +70,15 @@ func (r *Runner) run(hookType string) error {
 
 	cmd := exec.Command("bash", hookPath)
 	cmd.Dir = r.repoDir
-	cmd.Stdout = os.Stderr
-	cmd.Stderr = os.Stderr
+	
+	// Suppress output for post_update hook, show output for other hooks
+	if hookType == "post_update" {
+		cmd.Stdout = nil
+		cmd.Stderr = nil
+	} else {
+		cmd.Stdout = os.Stderr
+		cmd.Stderr = os.Stderr
+	}
 
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("%s hook failed: %w", hookType, err)

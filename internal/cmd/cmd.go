@@ -764,20 +764,32 @@ func downloadAndInstall(downloadURL string, latestVersion string) error {
 func runPostUpdateHook() {
 	cfg, err := config.Load()
 	if err != nil {
-		logger.Warn("Post-update hook skipped: %v", err)
 		return
 	}
 
 	repoDir := state.GetCurrentLink()
 	if _, err := os.Stat(repoDir); err != nil {
-		logger.Warn("Post-update hook skipped: current release not found at %s", repoDir)
 		return
 	}
 
-	hookRunner := hooks.New(repoDir, cfg.Hooks.PreAbs, cfg.Hooks.SuccessAbs, cfg.Hooks.FailureAbs, cfg.Hooks.PostUpdateAbs)
-	if err := hookRunner.RunPostUpdate(); err != nil {
-		logger.Warn("Post-update hook failed: %v", err)
+	// Suppress all output (logs and hook output) during post-update
+	devNull, err := os.Open(os.DevNull)
+	if err != nil {
+		return
 	}
+	defer devNull.Close()
+
+	oldStdout := os.Stdout
+	oldStderr := os.Stderr
+	os.Stdout = devNull
+	os.Stderr = devNull
+
+	hookRunner := hooks.New(repoDir, cfg.Hooks.PreAbs, cfg.Hooks.SuccessAbs, cfg.Hooks.FailureAbs, cfg.Hooks.PostUpdateAbs)
+	_ = hookRunner.RunPostUpdate()
+
+	// Restore stdout and stderr
+	os.Stdout = oldStdout
+	os.Stderr = oldStderr
 }
 
 func autoUpdate(currentVersion string, release *githubRelease) error {
