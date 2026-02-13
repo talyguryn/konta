@@ -9,7 +9,7 @@ import (
 	"github.com/talyguryn/konta/internal/logger"
 )
 
-const Version = "0.1.19"
+const Version = "0.1.20"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -113,6 +113,11 @@ func main() {
 	case "journal":
 		if err := cmd.Journal(); err != nil {
 			logger.Fatal("Journal failed: %v", err)
+		}
+
+	case "config":
+		if err := cmd.Config(); err != nil {
+			logger.Fatal("Config failed: %v", err)
 		}
 
 	case "-j", "-J":

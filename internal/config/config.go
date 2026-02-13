@@ -22,19 +22,21 @@ var (
 	}
 )
 
-func Load() (*types.Config, error) {
-	configPath := ""
-
-	// Find the first existing config file
+// FindConfigPath returns the first existing config path.
+func FindConfigPath() (string, error) {
 	for _, path := range configPaths {
 		if _, err := os.Stat(path); err == nil {
-			configPath = path
-			break
+			return path, nil
 		}
 	}
 
-	if configPath == "" {
-		return nil, fmt.Errorf("no configuration file found. Checked: %v", configPaths)
+	return "", fmt.Errorf("no configuration file found. Checked: %v", configPaths)
+}
+
+func Load() (*types.Config, error) {
+	configPath, err := FindConfigPath()
+	if err != nil {
+		return nil, err
 	}
 
 	logger.Info("Loading config from: %s", configPath)

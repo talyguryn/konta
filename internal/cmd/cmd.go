@@ -41,6 +41,7 @@ Usage:
   konta restart                     Restart the daemon
   konta status                      Show daemon status
   konta journal                     View live logs
+	konta config                      Print current config file
   konta update [-y]                 Update to latest version from GitHub
   konta version (-v)                Show version
   konta help (-h)                   Show this help
@@ -84,6 +85,31 @@ Environment:
 
 More info: https://github.com/talyguryn/konta
 `, version)
+}
+
+// Config prints the contents of the active config file.
+func Config() error {
+	configPath, err := config.FindConfigPath()
+	if err != nil {
+		return err
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return fmt.Errorf("failed to read config file: %w", err)
+	}
+
+	fmt.Printf("%s\n", configPath)
+	_, err = os.Stdout.Write(data)
+	if err != nil {
+		return fmt.Errorf("failed to write config output: %w", err)
+	}
+
+	if len(data) > 0 && data[len(data)-1] != '\n' {
+		fmt.Println()
+	}
+
+	return nil
 }
 
 // Install performs first-time setup with optional CLI parameters
