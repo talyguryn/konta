@@ -224,17 +224,6 @@ func (r *Reconciler) reconcileProject(project string) error {
 		return nil
 	}
 
-	// Check if this project should be stopped
-	shouldStop, err := r.shouldProjectBeStopped(project)
-	if err != nil {
-		logger.Warn("Failed to check if project should be stopped: %v", err)
-	}
-
-	if shouldStop {
-		logger.Info("Project %s marked to be stopped, stopping containers", project)
-		return r.stopProject(project)
-	}
-
 	cmd := exec.Command(
 		"docker", "compose",
 		"-p", project,
@@ -286,6 +275,9 @@ func (r *Reconciler) reconcileProject(project string) error {
 			return fmt.Errorf("docker compose failed: %w\nStderr: %s", err, stderrStr)
 		}
 	}
+
+	// After successful compose up, immediately stop containers marked with konta.stopped=true
+	r.stopContainersMarkedAsStopped(project)
 
 	logger.Info("Project %s reconciled successfully", project)
 	return nil
@@ -483,6 +475,35 @@ func (r *Reconciler) shouldProjectBeStopped(project string) (bool, error) {
 
 	// If we found containers marked to be stopped, project should be stopped
 	return len(strings.TrimSpace(string(output))) > 0, nil
+}
+
+// stopContainersMarkedAsStopped stops any running containers marked with konta.stopped=true
+func (r *Reconciler) stopContainersMarkedAsStopped(project string) {
+	stopCmd := exec.Command(
+		"docker", "ps",
+		"--filter", fmt.Sprintf("label=com.docker.compose.project=%s", project),
+		"--filter", "label=konta.managed=true",
+		"--filter", "label=konta.stopped=true",
+		"--filter", "status=running",
+		"--format", "{{.ID}}",
+	)
+
+	output, err := stopCmd.Output()
+	if err == nil && len(strings.TrimSpace(string(output))) > 0 {
+		// Found running containers marked to be stopped
+		containers := strings.Split(strings.TrimSpace(string(output)), "\n")
+		for _, containerID := range containers {
+			if containerID != "" {
+				logger.Info("Stopping container marked with konta.stopped=true: %s", containerID[:12])
+				if !r.dryRun {
+					doStopCmd := exec.Command("docker", "stop", containerID)
+					if err := doStopCmd.Run(); err != nil {
+						logger.Warn("Failed to stop container %s: %v", containerID[:12], err)
+					}
+				}
+			}
+		}
+	}
 }
 
 // stopProject stops all containers for a project
