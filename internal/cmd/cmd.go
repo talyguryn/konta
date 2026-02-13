@@ -638,15 +638,15 @@ func buildGitHubErrorMessage(statusCode int, body []byte) string {
 				resetTime, err := getGitHubRateLimitReset()
 				if err == nil {
 					when := formatRateLimitReset(resetTime)
-					return fmt.Sprintf("Error while checking updates: GitHub API rate limit exceeded. You can try again %s.", when)
+					return fmt.Sprintf("GitHub API rate limit exceeded. You can try again %s.", when)
 				}
-				return "Error while checking updates: GitHub API rate limit exceeded. Please try again later."
+				return "GitHub API rate limit exceeded. Please try again later."
 			}
-			return fmt.Sprintf("Error while checking updates: Access denied by GitHub API. %s", apiError.Message)
+			return fmt.Sprintf("Access denied by GitHub API. %s", apiError.Message)
 		case 404:
-			return "Error while checking updates: Release not found on GitHub"
+			return "Release not found on GitHub"
 		default:
-			return fmt.Sprintf("Error while checking updates: GitHub API error - %s", apiError.Message)
+			return fmt.Sprintf("GitHub API error - %s", apiError.Message)
 		}
 	}
 
@@ -656,13 +656,13 @@ func buildGitHubErrorMessage(statusCode int, body []byte) string {
 		resetTime, err := getGitHubRateLimitReset()
 		if err == nil {
 			when := formatRateLimitReset(resetTime)
-			return fmt.Sprintf("Error while checking updates: GitHub API rate limit exceeded. You can try again %s.", when)
+			return fmt.Sprintf("GitHub API rate limit exceeded. You can try again %s.", when)
 		}
-		return "Error while checking updates: GitHub API rate limit exceeded. Please try again later."
+		return "GitHub API rate limit exceeded. Please try again later."
 	case 404:
-		return "Error while checking updates: Release not found on GitHub"
+		return "Release not found on GitHub"
 	case 500, 502, 503, 504:
-		return "Error while checking updates: GitHub service temporarily unavailable. Please try again later."
+		return "GitHub service temporarily unavailable. Please try again later."
 	default:
 		return fmt.Sprintf("Error while checking updates: GitHub API returned status %d", statusCode)
 	}
@@ -671,13 +671,13 @@ func buildGitHubErrorMessage(statusCode int, body []byte) string {
 func fetchLatestRelease() (*githubRelease, error) {
 	resp, err := http.Get("https://api.github.com/repos/talyguryn/konta/releases/latest")
 	if err != nil {
-		return nil, fmt.Errorf("error while checking updates: failed to connect to GitHub - %v", err)
+		return nil, fmt.Errorf("Failed to connect to GitHub - %v", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("error while checking updates: failed to read response - %v", err)
+		return nil, fmt.Errorf("Failed to read response - %v", err)
 	}
 
 	if resp.StatusCode != 200 {
@@ -686,7 +686,7 @@ func fetchLatestRelease() (*githubRelease, error) {
 
 	var release githubRelease
 	if err := json.Unmarshal(body, &release); err != nil {
-		return nil, fmt.Errorf("error while checking updates: failed to parse release info")
+		return nil, fmt.Errorf("Failed to parse release info")
 	}
 
 	return &release, nil
@@ -853,7 +853,7 @@ func Update(currentVersion string, forceYes bool) error {
 	binaryName := getBinaryName()
 	downloadURL := findDownloadURL(release, binaryName)
 	if downloadURL == "" {
-		return fmt.Errorf("no binary found for %s/%s", runtime.GOOS, runtime.GOARCH)
+		return fmt.Errorf("Update failed: no binary found for %s/%s. Try to check updates later again.", runtime.GOOS, runtime.GOARCH)
 	}
 
 	fmt.Printf("\nDownloading %s...\n", binaryName)
