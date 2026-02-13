@@ -1,3 +1,5 @@
+> ⚠️ This is a public beta release. Use at your own risk. Feedback and contributions are welcome!
+
 # Konta - GitOps for Docker Compose
 
 A lightweight, idempotent deployment system for single-node servers.
@@ -5,6 +7,12 @@ A lightweight, idempotent deployment system for single-node servers.
 Keep your infrastructure in Git. Deploy automatically. Stay simple.
 
 **Perfect for:** Single VPS, Docker Compose stacks, self-hosted projects.
+
+## Why
+
+If you're like me, you want a simple way to manage your server infrastructure using Git. I prefer managing my projects on VPS with a few docker-compose files in separate dirs. But Also I want to have a single source of truth for my infrastructure in Git, and I want it to automatically deploy whenever I push changes. I'd love to use k3s + flux but it's overkill for a single VPS. I just want something simple, reliable, and Git-driven.
+
+So I built Konta — a tiny, single binary tool that watches a Git repository and automatically deploys Docker Compose stacks on your server. It handles atomic updates, orphan cleanup, and hooks for pre/post deploy scripts. It's perfect for anyone who wants GitOps for their single-node Docker infrastructure without the complexity of Kubernetes.
 
 ## What is Konta?
 
@@ -18,14 +26,14 @@ Konta is a simple tool that:
 
 ## Key Features
 
-✅ **Single Static Binary** — No dependencies
-✅ **Git-Driven** — One source of truth
-✅ **Atomic Deployments** — Zero-downtime updates
-✅ **Safe** — Only manages its own containers
-✅ **Simple** — Just YAML + Docker Compose
-✅ **Multi-Server** — One repo, multiple servers
-✅ **Hooks** — Pre/post deploy scripts
-✅ **Idempotent** — Safe to run repeatedly
+- ✅ **Single Static Binary** — No dependencies
+- ✅ **Git-Driven** — One source of truth
+- ✅ **Atomic Deployments** — Zero-downtime updates
+- ✅ **Safe** — Only manages its own containers
+- ✅ **Simple** — Just YAML + Docker Compose
+- ✅ **Multi-Server** — One repo, multiple servers
+- ✅ **Hooks** — Pre/post deploy scripts
+- ✅ **Idempotent** — Safe to run repeatedly
 
 ## When to Use Konta?
 
