@@ -91,13 +91,25 @@ func main() {
 		}
 
 	case "start":
-		if err := cmd.ManageDaemon("start"); err != nil {
-			logger.Fatal("Start failed: %v", err)
+		logger.Warn("Command 'start' is deprecated. Use 'enable' instead.")
+		if err := cmd.ManageDaemon("enable"); err != nil {
+			logger.Fatal("Enable failed: %v", err)
 		}
 
 	case "stop":
-		if err := cmd.ManageDaemon("stop"); err != nil {
-			logger.Fatal("Stop failed: %v", err)
+		logger.Warn("Command 'stop' is deprecated. Use 'disable' instead.")
+		if err := cmd.ManageDaemon("disable"); err != nil {
+			logger.Fatal("Disable failed: %v", err)
+		}
+
+	case "enable":
+		if err := cmd.ManageDaemon("enable"); err != nil {
+			logger.Fatal("Enable failed: %v", err)
+		}
+
+	case "disable":
+		if err := cmd.ManageDaemon("disable"); err != nil {
+			logger.Fatal("Disable failed: %v", err)
 		}
 
 	case "restart":

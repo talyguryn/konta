@@ -32,19 +32,16 @@ https://github.com/talyguryn/konta
 GitOps for Docker Compose
 
 Usage:
-  konta install [OPTIONS]           First-time setup
-  konta uninstall                   Remove Konta completely
-  konta run [--dry-run] [--watch]   Execute once or in watch mode
-  konta daemon [enable|disable|restart|status]  Manage daemon service
-  konta start                       Start the daemon
-  konta stop                        Stop the daemon
-  konta restart                     Restart the daemon
-  konta status                      Show daemon status
-  konta journal                     View live logs
-	konta config [-e]                 Print or edit current config file
-  konta update [-y]                 Update to latest version from GitHub
-  konta version (-v)                Show version
-  konta help (-h)                   Show this help
+	konta install [OPTIONS]
+	konta uninstall
+	konta run [--dry-run] [--watch]
+	konta daemon [enable|disable|restart|status]
+	konta enable | konta disable | konta restart | konta status
+	konta journal
+	konta config [-e]
+	konta update [-y]
+	konta version (-v)
+	konta help (-h)
 
 Install Options:
   --repo URL                        GitHub repository URL (required)
@@ -183,7 +180,7 @@ func Install(args []string) error {
 		branch = "main"
 	}
 	if appsPath == "" {
-		appsPath = "apps"
+		appsPath = "."
 	}
 	if interval == 0 {
 		interval = 120
@@ -250,15 +247,17 @@ func Install(args []string) error {
 	fmt.Println("Configuration:")
 	fmt.Printf("  Repository: %s\n", repoURL)
 	fmt.Printf("  Branch:     %s\n", branch)
-	fmt.Printf("  Apps path:  %s\n", appsPath)
+	fmt.Printf("  Base path:  %s\n", appsPath)
 	fmt.Printf("  Interval:   %d seconds\n", interval)
 	fmt.Printf("  Auto-update: %s\n", kontaUpdates)
+
 	fmt.Println()
-	fmt.Println("Next steps:")
-	fmt.Println("  1. Run once to test:     konta run")
-	fmt.Println("  2. Enable daemon:        sudo konta daemon enable")
-	fmt.Println("  3. Check daemon status:  systemctl status konta")
-	fmt.Println("  4. View logs:            journalctl -u konta -f")
+	fmt.Println("Starting daemon...")
+	if err := daemonEnable("konta", "/etc/systemd/system/konta.service"); err != nil {
+		logger.Warn("Failed to auto-enable daemon: %v", err)
+		fmt.Printf("\n⚠️  Could not auto-start daemon. To enable it manually, run:\n")
+		fmt.Printf("    sudo konta daemon enable\n")
+	}
 
 	return nil
 }
@@ -368,7 +367,7 @@ func validateInstallParams(repoURL, branch, appsPath string, interval int) error
 		return fmt.Errorf("branch is required")
 	}
 	if appsPath == "" {
-		return fmt.Errorf("apps path is required")
+		return fmt.Errorf("base path is required")
 	}
 	if interval <= 0 {
 		return fmt.Errorf("interval must be greater than 0")
@@ -1120,16 +1119,18 @@ func ManageDaemon(action string) error {
 		return daemonStatus(serviceName)
 
 	case "start":
-		return daemonStart(serviceName)
+		logger.Warn("Daemon action 'start' is deprecated. Use 'enable' instead.")
+		return daemonEnable(serviceName, serviceFile)
 
 	case "stop":
-		return daemonStop(serviceName)
+		logger.Warn("Daemon action 'stop' is deprecated. Use 'disable' instead.")
+		return daemonDisable(serviceName, serviceFile)
 
 	case "restart":
 		return daemonRestart(serviceName)
 
 	default:
-		return fmt.Errorf("unknown daemon action: %s (use: enable, disable, restart, status, start, stop)", action)
+		return fmt.Errorf("unknown daemon action: %s (use: enable, disable, restart, status)", action)
 	}
 }
 
@@ -1186,8 +1187,8 @@ WantedBy=multi-user.target
 
 	fmt.Printf("✅ Konta daemon enabled and started\n")
 	fmt.Printf("   Manage:\n")
-	fmt.Printf("     konta start      - Start service\n")
-	fmt.Printf("     konta stop       - Stop service\n")
+	fmt.Printf("     konta enable     - Enable and start service\n")
+	fmt.Printf("     konta disable    - Stop and disable service\n")
 	fmt.Printf("     konta restart    - Restart service\n")
 	fmt.Printf("     konta status     - Check status\n")
 	fmt.Printf("   Logs:\n")
