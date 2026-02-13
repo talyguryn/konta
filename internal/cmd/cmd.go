@@ -32,42 +32,184 @@ https://github.com/talyguryn/konta
 GitOps for Docker Compose
 
 Usage:
-  konta install                 First-time setup
-  konta uninstall               Remove Konta completely
-  konta run [--dry-run] [--watch]  Execute once or in watch mode
+  konta install [OPTIONS]           First-time setup
+  konta uninstall                   Remove Konta completely
+  konta run [--dry-run] [--watch]   Execute once or in watch mode
   konta daemon [enable|disable|status]  Manage systemd service
-  konta status                  Show last deployment info
-  konta journal                 View live logs (journalctl -f)
-  konta update                  Update to latest version from GitHub
-  konta version (-v)            Show version
-  konta help (-h)               Show this help
+  konta status                      Show last deployment info
+  konta journal                     View live logs (journalctl -f)
+  konta update                      Update to latest version from GitHub
+  konta version (-v)                Show version
+  konta help (-h)                   Show this help
+
+Install Options:
+  --repo URL                        GitHub repository URL (required)
+  --path PATH                       Apps path inside repo (default: apps)
+  --branch BRANCH                   Git branch (default: main)
+  --interval SECONDS                Polling interval (default: 120)
+  --token TOKEN                     GitHub token (or set KONTA_TOKEN env)
 
 Short flags:
-  -h, --help                    Show this help
-  -v, --version                 Show version
-  -r                            Same as 'run'
-  -d                            Same as 'daemon enable'
-  -s                            Same as 'status'
+  -h, --help                        Show this help
+  -v, --version                     Show version
+  -r                                Same as 'run'
+  -d                                Same as 'daemon enable'
+  -s                                Same as 'status'
 
 Examples:
-  konta install              # Interactive setup
-  konta run                  # Single reconciliation
-  konta run --watch          # Watch mode (poll every N seconds)
-  konta run --dry-run        # Show what would change
-  konta daemon enable        # Enable background service
-  konta daemon disable       # Disable background service
-  konta daemon status        # Check if running
-  konta journal              # View live logs
-  konta update               # Update to latest version
+  konta install                     # Interactive setup
+  konta install --repo https://github.com/user/infra --path apps
+  konta install --repo https://github.com/talyguryn/konta --path spb/apps
+  konta run                         # Single reconciliation
+  konta run --watch                 # Watch mode (poll every N seconds)
+  konta run --dry-run               # Show what would change
+  konta daemon enable               # Enable background service
+  konta daemon disable              # Disable background service
+  konta daemon status               # Check if running
+  konta journal                     # View live logs
+  konta update                      # Update to latest version
+
+Environment:
+  KONTA_TOKEN                       GitHub token (alternative to --token)
 
 More info: https://github.com/talyguryn/konta
 `, version)
 }
 
-// Install performs first-time setup
-func Install() error {
+// Install performs first-time setup with optional CLI parameters
+// Usage: konta install [--repo URL] [--path PATH] [--branch BRANCH] [--interval SECONDS] [--token TOKEN]
+func Install(args []string) error {
 	logger.Info("Starting Konta installation")
 
+	// Parse command-line arguments
+	var (
+		repoURL  string
+		branch   string
+		appsPath string
+		interval int
+		token    string
+	)
+
+	// Parse flags
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--repo":
+			if i+1 < len(args) {
+				repoURL = args[i+1]
+				i++
+			}
+		case "--path":
+			if i+1 < len(args) {
+				appsPath = args[i+1]
+				i++
+			}
+		case "--branch":
+			if i+1 < len(args) {
+				branch = args[i+1]
+				i++
+			}
+		case "--interval":
+			if i+1 < len(args) {
+				if n, err := strconv.Atoi(args[i+1]); err == nil && n > 0 {
+					interval = n
+				}
+				i++
+			}
+		case "--token":
+			if i+1 < len(args) {
+				token = args[i+1]
+				i++
+			}
+		}
+	}
+
+	// If no args provided, use interactive mode
+	if repoURL == "" {
+		return installInteractive()
+	}
+
+	// Set defaults for missing values
+	if branch == "" {
+		branch = "main"
+	}
+	if appsPath == "" {
+		appsPath = "apps"
+	}
+	if interval == 0 {
+		interval = 120
+	}
+
+	// Get token from environment if not provided via CLI
+	if token == "" {
+		token = os.Getenv("KONTA_TOKEN")
+	}
+
+	// Validate inputs
+	logger.Info("Validating configuration parameters...")
+	if err := validateInstallParams(repoURL, branch, appsPath, interval); err != nil {
+		return err
+	}
+
+	// Test repository connection
+	logger.Info("Testing repository connection to: %s", repoURL)
+	if err := testRepositoryConnection(repoURL, branch, token); err != nil {
+		return fmt.Errorf("repository connection failed: %w", err)
+	}
+	logger.Info("✓ Repository connection successful")
+
+	// Create configuration
+	cfg := &types.Config{
+		Version: "v1",
+		Repository: types.RepositoryConf{
+			URL:      repoURL,
+			Branch:   branch,
+			Token:    token,
+			Path:     appsPath,
+			Interval: interval,
+		},
+		Deploy: types.DeployConf{
+			Atomic: true,
+		},
+		Logging: types.LoggingConf{
+			Level: "info",
+		},
+	}
+
+	// Initialize directories
+	logger.Info("Initializing Konta state directory...")
+	if err := state.Init(); err != nil {
+		return fmt.Errorf("failed to initialize state: %w", err)
+	}
+	logger.Info("✓ State directory initialized")
+
+	// Save configuration
+	logger.Info("Saving configuration...")
+	if err := config.Save(cfg); err != nil {
+		return fmt.Errorf("failed to save config: %w", err)
+	}
+	logger.Info("✓ Configuration saved to /etc/konta/config.yaml")
+
+	// Display summary
+	fmt.Println()
+	fmt.Println("✅ Setup complete!")
+	fmt.Println()
+	fmt.Println("Configuration:")
+	fmt.Printf("  Repository: %s\n", repoURL)
+	fmt.Printf("  Branch:     %s\n", branch)
+	fmt.Printf("  Apps path:  %s\n", appsPath)
+	fmt.Printf("  Interval:   %d seconds\n", interval)
+	fmt.Println()
+	fmt.Println("Next steps:")
+	fmt.Println("  1. Run once to test:     konta run")
+	fmt.Println("  2. Enable daemon:        sudo konta daemon enable")
+	fmt.Println("  3. Check daemon status:  systemctl status konta")
+	fmt.Println("  4. View logs:            journalctl -u konta -f")
+
+	return nil
+}
+
+// installInteractive performs installation in interactive mode
+func installInteractive() error {
 	reader := bufio.NewReader(os.Stdin)
 
 	fmt.Print("Repository URL (e.g., https://github.com/user/infra): ")
@@ -85,11 +227,11 @@ func Install() error {
 		branch = "main"
 	}
 
-	fmt.Print("Apps path inside repo [vps0/apps]: ")
+	fmt.Print("Apps path inside repo [apps]: ")
 	appsPath, _ := reader.ReadString('\n')
 	appsPath = strings.TrimSpace(appsPath)
 	if appsPath == "" {
-		appsPath = "vps0/apps"
+		appsPath = "apps"
 	}
 
 	fmt.Print("Polling interval in seconds [120]: ")
@@ -155,6 +297,55 @@ func Install() error {
 		}
 	}
 
+	return nil
+}
+
+// validateInstallParams validates installation parameters
+func validateInstallParams(repoURL, branch, appsPath string, interval int) error {
+	if repoURL == "" {
+		return fmt.Errorf("repository URL is required")
+	}
+	if !strings.HasPrefix(repoURL, "http://") && !strings.HasPrefix(repoURL, "https://") {
+		return fmt.Errorf("repository URL must start with http:// or https://")
+	}
+	if branch == "" {
+		return fmt.Errorf("branch is required")
+	}
+	if appsPath == "" {
+		return fmt.Errorf("apps path is required")
+	}
+	if interval <= 0 {
+		return fmt.Errorf("interval must be greater than 0")
+	}
+	logger.Info("✓ All parameters valid")
+	return nil
+}
+
+// testRepositoryConnection tests if we can connect to the repository
+func testRepositoryConnection(repoURL, branch, token string) error {
+	logger.Info("Testing connection with git...")
+	
+	tempDir, err := os.MkdirTemp("", "konta-test-*")
+	if err != nil {
+		return fmt.Errorf("failed to create temp directory: %w", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	logger.Debug("Using temporary directory: %s", tempDir)
+
+	// Try to clone the repo with depth 1 just to test connection
+	cfgCopy := &types.RepositoryConf{
+		URL:    repoURL,
+		Branch: branch,
+		Token:  token,
+	}
+
+	_, err = git.Clone(cfgCopy, tempDir)
+	if err != nil {
+		return fmt.Errorf("failed to clone repository: %w", err)
+	}
+
+	logger.Info("✓ Successfully cloned test repository")
 	return nil
 }
 

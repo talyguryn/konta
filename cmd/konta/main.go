@@ -35,7 +35,8 @@ func main() {
 		os.Exit(0)
 
 	case "install":
-		if err := cmd.Install(); err != nil {
+		installArgs := os.Args[2:]
+		if err := cmd.Install(installArgs); err != nil {
 			logger.Fatal("Install failed: %v", err)
 		}
 

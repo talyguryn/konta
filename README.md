@@ -60,20 +60,64 @@ Konta is a simple tool that:
 ### 1. Download & Install
 
 ```bash
-wget https://github.com/kontacd/konta/releases/latest/download/konta-linux
+wget https://github.com/talyguryn/konta/releases/latest/download/konta-linux
 chmod +x konta-linux
 sudo mv konta-linux /usr/local/bin/konta
-
-# Install on your server
-konta install
 ```
 
-### 2. Repository Structure
+### 2. Setup with One Command
+
+**Interactive mode (default):**
+```bash
+sudo konta install
+```
+
+**Or with CLI parameters (no prompts):**
+```bash
+sudo konta install \
+  --repo https://github.com/yourname/infrastructure \
+  --branch main \
+  --path vps0/apps \
+  --interval 120
+```
+
+Using KONTA_TOKEN for private repos:
+```bash
+export KONTA_TOKEN=gh_your_github_token
+sudo konta install \
+  --repo https://github.com/yourname/infrastructure \
+  --path apps
+```
+
+### 3. Example: Manage Konta Itself
+
+Here's a cool example - use Konta to manage Konta!
+
+```bash
+# Setup Konta to monitor this repository
+sudo konta install \
+  --repo https://github.com/talyguryn/konta \
+  --path spb/apps \
+  --branch main \
+  --interval 120
+
+# Start the daemon
+sudo konta daemon enable
+
+# Konta will now:
+# 1. Check for changes every 2 minutes
+# 2. Only restart containers that changed
+# 3. Skip unchanged apps (beszel-agent, nginx, etc.)
+# 4. Manage pre/success hooks from spb/hooks/
+```
+
+This demonstrates real use: each git push to the infrastructure repository triggers only the affected services to update!
+
+### 4. Repository Structure
 
 ```
 infrastructure/
 ├── vps0/                   # Your server
-│   ├── konta.yaml          # Configuration
 │   ├── apps/
 │   │   ├── web/docker-compose.yml
 │   │   └── api/docker-compose.yml
@@ -82,21 +126,13 @@ infrastructure/
 │       └── success.sh
 ```
 
-### 3. Configuration (konta.yaml)
+### 5. Edit Configuration Later
 
-```yaml
-version: v1
-repository:
-  url: https://github.com/yourname/infrastructure
-  branch: main
-  path: vps0/apps
-  interval: 120
-deploy:
-  atomic: true
-hooks:
-  pre: vps0/hooks/pre.sh
-  success: vps0/hooks/success.sh
-```
+Configuration is auto-generated at `/etc/konta/config.yaml`. The installer will:
+- ✅ Auto-configure hooks paths (will look in `{path}/hooks/`)
+- ✅ Create config.lock for validation
+- ✅ Log the Konta version before loading config
+- ✅ Support dynamic interval updates (just edit config and save)
 
 ### 4. Deploy!
 
