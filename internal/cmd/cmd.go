@@ -77,17 +77,18 @@ More info: https://github.com/talyguryn/konta
 }
 
 // Install performs first-time setup with optional CLI parameters
-// Usage: konta install [--repo URL] [--path PATH] [--branch BRANCH] [--interval SECONDS] [--token TOKEN]
+// Usage: konta install [--repo URL] [--path PATH] [--branch BRANCH] [--interval SECONDS] [--token TOKEN] [--konta_updates auto|notify|false]
 func Install(args []string) error {
 	logger.Info("Starting Konta installation")
 
 	// Parse command-line arguments
 	var (
-		repoURL  string
-		branch   string
-		appsPath string
-		interval int
-		token    string
+		repoURL      string
+		branch       string
+		appsPath     string
+		interval     int
+		token        string
+		kontaUpdates string
 	)
 
 	// Parse flags
@@ -120,6 +121,11 @@ func Install(args []string) error {
 				token = args[i+1]
 				i++
 			}
+		case "--konta_updates":
+			if i+1 < len(args) {
+				kontaUpdates = args[i+1]
+				i++
+			}
 		}
 	}
 
@@ -137,6 +143,9 @@ func Install(args []string) error {
 	}
 	if interval == 0 {
 		interval = 120
+	}
+	if kontaUpdates == "" {
+		kontaUpdates = "notify"
 	}
 
 	// Get token from environment if not provided via CLI
@@ -173,6 +182,7 @@ func Install(args []string) error {
 		Logging: types.LoggingConf{
 			Level: "info",
 		},
+		KontaUpdates: kontaUpdates,
 	}
 
 	// Initialize directories
@@ -198,6 +208,7 @@ func Install(args []string) error {
 	fmt.Printf("  Branch:     %s\n", branch)
 	fmt.Printf("  Apps path:  %s\n", appsPath)
 	fmt.Printf("  Interval:   %d seconds\n", interval)
+	fmt.Printf("  Auto-update: %s\n", kontaUpdates)
 	fmt.Println()
 	fmt.Println("Next steps:")
 	fmt.Println("  1. Run once to test:     konta run")
@@ -246,6 +257,18 @@ func installInteractive() error {
 	token, _ := reader.ReadString('\n')
 	token = strings.TrimSpace(token)
 
+	fmt.Print("Check for Konta updates [auto/notify/false] [notify]: ")
+	kontaUpdates, _ := reader.ReadString('\n')
+	kontaUpdates = strings.TrimSpace(kontaUpdates)
+	if kontaUpdates == "" {
+		kontaUpdates = "notify"
+	}
+	// Validate update setting
+	if kontaUpdates != "auto" && kontaUpdates != "notify" && kontaUpdates != "false" {
+		kontaUpdates = "notify"
+		fmt.Printf("Invalid setting, using default: %s\n", kontaUpdates)
+	}
+
 	// Create configuration
 	cfg := &types.Config{
 		Version: "v1",
@@ -262,6 +285,7 @@ func installInteractive() error {
 		Logging: types.LoggingConf{
 			Level: "info",
 		},
+		KontaUpdates: kontaUpdates,
 	}
 
 	// Initialize directories
@@ -474,6 +498,51 @@ func Journal() error {
 }
 
 // Update checks for and installs the latest version from GitHub
+// CheckForUpdates checks if a new version is available without updating
+// Used during watch mode to notify user of available updates
+func CheckForUpdates(currentVersion string, updateBehavior string) error {
+	// Skip if updates are disabled
+	if updateBehavior == "false" || updateBehavior == "" {
+		return nil
+	}
+
+	// Fetch latest release from GitHub API
+	resp, err := http.Get("https://api.github.com/repos/talyguryn/konta/releases/latest")
+	if err != nil {
+		logger.Debug("Failed to check for updates: %v", err)
+		return nil // Don't fail on update check errors
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != 200 {
+		logger.Debug("GitHub API returned status %d", resp.StatusCode)
+		return nil
+	}
+
+	var release struct {
+		TagName string `json:"tag_name"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+		logger.Debug("Failed to parse release info: %v", err)
+		return nil
+	}
+
+	latestVersion := strings.TrimPrefix(release.TagName, "v")
+
+	if latestVersion == currentVersion {
+		return nil // Already on latest
+	}
+
+	// Only notify, don't auto-update
+	if updateBehavior == "notify" {
+		logger.Info("New Konta version available: v%s (current: v%s). Run 'konta update' to install.", latestVersion, currentVersion)
+		return nil
+	}
+
+	return nil
+}
+
 func Update(currentVersion string) error {
 	fmt.Printf("Current version: v%s\n", currentVersion)
 	fmt.Println("Checking for updates from GitHub...")
@@ -629,6 +698,9 @@ func Run(dryRun bool, watch bool, version string) error {
 		ticker = time.NewTicker(time.Duration(cfg.Repository.Interval) * time.Second)
 		defer ticker.Stop()
 
+		checkCounter := 0
+		checkInterval := 10 // Check for updates every 10 cycles
+
 		// Infinite loop - exit only on signal (Ctrl+C) or systemd stop
 		for range ticker.C {
 			// Reload config on each iteration to pick up interval changes
@@ -645,6 +717,13 @@ func Run(dryRun bool, watch bool, version string) error {
 				cfg = newCfg
 			} else {
 				cfg = newCfg
+			}
+
+			// Check for updates periodically (every 10 cycles)
+			checkCounter++
+			if checkCounter >= checkInterval && cfg.KontaUpdates != "" && cfg.KontaUpdates != "false" {
+				checkCounter = 0
+				_ = CheckForUpdates(version, cfg.KontaUpdates)
 			}
 
 			if err := reconcileOnce(false, version); err != nil {

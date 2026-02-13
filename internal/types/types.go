@@ -2,11 +2,12 @@ package types
 
 // Config represents the konta configuration
 type Config struct {
-	Version    string         `yaml:"version"`
-	Repository RepositoryConf `yaml:"repository"`
-	Deploy     DeployConf     `yaml:"deploy,omitempty"`
-	Hooks      HooksConf      `yaml:"hooks,omitempty"`
-	Logging    LoggingConf    `yaml:"logging,omitempty"`
+	Version       string         `yaml:"version"`
+	Repository    RepositoryConf `yaml:"repository"`
+	Deploy        DeployConf     `yaml:"deploy,omitempty"`
+	Hooks         HooksConf      `yaml:"hooks,omitempty"`
+	Logging       LoggingConf    `yaml:"logging,omitempty"`
+	KontaUpdates  string         `yaml:"konta_updates,omitempty"` // auto, notify (default), false
 }
 
 // RepositoryConf represents git repository configuration
