@@ -17,7 +17,6 @@ services:
     deploy:
       mode: replicated
       replicas: 3
-      endpoint_mode: vip
 
       resources:
         limits:
