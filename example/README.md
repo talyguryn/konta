@@ -60,12 +60,12 @@ chmod +x konta-linux
 sudo mv konta-linux /usr/local/bin/konta
 
 # Install with configuration
-sudo konta install /path/to/infrastructure/vps0
+sudo konta install
 
 # Follow prompts:
 # URL: https://github.com/yourname/infrastructure
 # Branch: main
-# Path: vps0/apps
+# Path: vps0
 # Interval: 120
 # Token: (if private repo)
 # Enable daemon: yes

@@ -41,7 +41,7 @@ version: v1
 repository:
   url: https://github.com/user/infrastructure
   branch: main
-  path: vps0/apps      # ← We'll scan THIS folder
+  path: vps0           # ← Base path (apps folder will be inside)
   interval: 120         # ← Poll every 120 seconds
 ```
 
@@ -277,6 +277,24 @@ PagerDuty alert...
 
 Only runs if something went wrong.
 
+### Post-Update Hook (after Konta binary update)
+
+```bash
+#!/bin/bash
+# vps0/hooks/post_update.sh
+
+# Reload configuration or restart services if needed
+# This runs after successful Konta binary update
+
+# Notify team
+curl -X POST https://hooks.slack.com/xxx \
+  -d '{"text":"Konta updated successfully!"}'
+
+# Your post-update logic
+```
+
+Runs after Konta itself is updated to a new version (not after app deployments).
+
 ## State Tracking
 
 Konta tracks deployment history:
@@ -340,7 +358,7 @@ version: v1                      # Required: config version
 repository:
   url: https://...               # Required: git repo
   branch: main                   # Optional: default "main"
-  path: vps0/apps                # Optional: default "apps"
+  path: vps0                     # Optional: base path (default: repo root)
   interval: 120                  # Optional: default 120 (seconds)
   token: ghp_xxxx                # Optional: for private repos
 
@@ -349,9 +367,10 @@ deploy:
   remove_orphans: true           # Optional: default true
 
 hooks:
-  pre: vps0/hooks/pre.sh         # Optional
-  success: vps0/hooks/success.sh # Optional
-  failure: vps0/hooks/failure.sh # Optional
+  pre: pre.sh           # Optional: found in {path}/hooks/
+  success: success.sh   # Optional: found in {path}/hooks/
+  failure: failure.sh   # Optional: found in {path}/hooks/
+  post_update: post_update.sh  # Optional: after konta binary update
 
 logging:
   level: info                    # Optional: debug/info/warn/error

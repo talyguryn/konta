@@ -15,7 +15,7 @@ type RepositoryConf struct {
 	URL      string `yaml:"url"`
 	Branch   string `yaml:"branch"`
 	Token    string `yaml:"token"`
-	Path     string `yaml:"path"`
+	Path     string `yaml:"path"` // Path to base directory containing 'apps' folder (or just empty/. for repo root)
 	Interval int    `yaml:"interval"` // seconds
 }
 
@@ -29,12 +29,14 @@ type DeployConf struct {
 
 // HooksConf represents hooks configuration
 type HooksConf struct {
-	Pre        string `yaml:"pre,omitempty"`
-	Success    string `yaml:"success,omitempty"`
-	Failure    string `yaml:"failure,omitempty"`
+	Pre        string `yaml:"pre,omitempty"`        // Just filename: pre.sh (found in hooks dir)
+	Success    string `yaml:"success,omitempty"`    // Just filename: success.sh (found in hooks dir)
+	Failure    string `yaml:"failure,omitempty"`    // Just filename: failure.sh (found in hooks dir)
+	PostUpdate string `yaml:"post_update,omitempty"` // Just filename: post_update.sh (found in hooks dir)
 	PreAbs     string `yaml:"-"` // Absolute path to pre hook (set by config loader)
 	SuccessAbs string `yaml:"-"` // Absolute path to success hook
 	FailureAbs string `yaml:"-"` // Absolute path to failure hook
+	PostUpdateAbs string `yaml:"-"` // Absolute path to post_update hook
 }
 
 // LoggingConf represents logging configuration

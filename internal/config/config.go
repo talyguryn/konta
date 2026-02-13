@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -45,7 +46,7 @@ func Load() (*types.Config, error) {
 
 	config := &types.Config{
 		Repository: types.RepositoryConf{
-			Path:     "apps",
+			Path:     ".",
 			Interval: 120,
 			Branch:   "main",
 		},
@@ -69,23 +70,44 @@ func Load() (*types.Config, error) {
 		return nil, fmt.Errorf("repository.url is required")
 	}
 
-	// Configure hooks with default paths if not explicitly set
-	// Default hooks live at the repo root: {repo_root}/hooks/*.sh
-	hooksBase := filepath.Join(filepath.Dir(config.Repository.Path), "hooks")
-	if config.Hooks.Pre == "" {
-		config.Hooks.Pre = filepath.Join(hooksBase, "pre.sh")
-	}
-	if config.Hooks.Success == "" {
-		config.Hooks.Success = filepath.Join(hooksBase, "success.sh")
-	}
-	if config.Hooks.Failure == "" {
-		config.Hooks.Failure = filepath.Join(hooksBase, "failure.sh")
+	// Normalize repository path - ensure it points to 'apps' directory
+	// If path ends with 'apps', keep it
+	// Otherwise, append 'apps' to the path
+	if config.Repository.Path == "" || config.Repository.Path == "." {
+		config.Repository.Path = "apps"
+	} else if !strings.HasSuffix(config.Repository.Path, "apps") {
+		config.Repository.Path = filepath.Join(config.Repository.Path, "apps")
 	}
 
-	// Preserve relative paths (resolved later against repo root)
-	config.Hooks.PreAbs = config.Hooks.Pre
-	config.Hooks.SuccessAbs = config.Hooks.Success
-	config.Hooks.FailureAbs = config.Hooks.Failure
+	// Get the base directory (parent of apps directory) for hooks location
+	appsBasePath := filepath.Dir(config.Repository.Path)
+	if appsBasePath == "." {
+		appsBasePath = ""
+	}
+
+	// Configure hooks with default paths if not explicitly set
+	// Hooks now accept just the filename (e.g., "pre.sh", "post_update.sh")
+	// They are resolved relative to {repo_root}/hooks/ directory
+	hooksBase := filepath.Join(appsBasePath, "hooks")
+	
+	if config.Hooks.Pre == "" {
+		config.Hooks.Pre = "pre.sh"
+	}
+	if config.Hooks.Success == "" {
+		config.Hooks.Success = "success.sh"
+	}
+	if config.Hooks.Failure == "" {
+		config.Hooks.Failure = "failure.sh"
+	}
+	if config.Hooks.PostUpdate == "" {
+		config.Hooks.PostUpdate = "post_update.sh"
+	}
+
+	// Build absolute paths (relative to repo root, will be resolved later)
+	config.Hooks.PreAbs = filepath.Join(hooksBase, config.Hooks.Pre)
+	config.Hooks.SuccessAbs = filepath.Join(hooksBase, config.Hooks.Success)
+	config.Hooks.FailureAbs = filepath.Join(hooksBase, config.Hooks.Failure)
+	config.Hooks.PostUpdateAbs = filepath.Join(hooksBase, config.Hooks.PostUpdate)
 
 	// Override token from environment if set
 	if token := os.Getenv("KONTA_TOKEN"); token != "" {

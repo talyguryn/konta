@@ -134,7 +134,7 @@ This demonstrates real use: each git push to the infrastructure repository trigg
 ### 4. Configuration
 
 Configuration is auto-generated at `/etc/konta/config.yaml`:
-- ✅ Auto-configure hooks paths (looks in `{path}/hooks/`)
+- ✅ Auto-configure hooks paths (looks in `{path}/hooks/` for just filenames)
 - ✅ Create config.lock with full backup for recovery
 - ✅ Log the Konta version before each run
 - ✅ Support dynamic interval updates (edit config and save)
@@ -146,14 +146,15 @@ version: v1
 repository:
   url: https://github.com/yourname/infrastructure
   branch: main
-  path: apps
+  path: spb              # Base path (omit or use . for repo root)
   interval: 120
-  token: gh_xxxx  # Optional, or use KONTA_TOKEN env var
-konta_updates: notify  # auto|notify|false - manage update checks
+  token: gh_xxxx         # Optional, or use KONTA_TOKEN env var
+konta_updates: notify    # auto|notify|false - manage update checks
 hooks:
-  pre: spb/hooks/pre.sh           # Optional
-  success: spb/hooks/success.sh   # Optional
-  failure: spb/hooks/failure.sh   # Optional
+  pre: pre.sh            # Optional, found in {path}/hooks/
+  success: success.sh    # Optional, found in {path}/hooks/
+  failure: failure.sh    # Optional, found in {path}/hooks/
+  post_update: post_update.sh  # Optional, after Konta binary update
 deploy:
   atomic: true
 logging:

@@ -16,12 +16,13 @@ type Runner struct {
 }
 
 // New creates a new hook runner
-func New(repoDir string, prePath, successPath, failurePath string) *Runner {
+func New(repoDir string, prePath, successPath, failurePath, postUpdatePath string) *Runner {
 	return &Runner{
 		hookPaths: map[string]string{
-			"pre":     prePath,
-			"success": successPath,
-			"failure": failurePath,
+			"pre":         prePath,
+			"success":     successPath,
+			"failure":     failurePath,
+			"post_update": postUpdatePath,
 		},
 		repoDir: repoDir,
 	}
@@ -40,6 +41,11 @@ func (r *Runner) RunSuccess() error {
 // RunFailure runs the failure hook
 func (r *Runner) RunFailure() error {
 	return r.run("failure")
+}
+
+// RunPostUpdate runs the post-update hook (executed after konta binary update)
+func (r *Runner) RunPostUpdate() error {
+	return r.run("post_update")
 }
 
 func (r *Runner) run(hookType string) error {

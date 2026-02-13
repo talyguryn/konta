@@ -46,7 +46,7 @@ sudo konta install /path/to/infrastructure/vps0
 # Answer prompts:
 # Repository URL: https://github.com/yourname/infrastructure
 # Branch: main
-# Apps path: vps0/apps
+# Base path: vps0
 # Polling interval: 120
 # GitHub token: (paste if private repo) or press Enter
 # Enable daemon? yes
@@ -89,8 +89,9 @@ repository:
   # Which branch to track
   branch: main
 
-  # Relative path to apps folder (from repo root)
-  path: vps0/apps
+  # Base path containing 'apps' folder (relative to repo root)
+  # Omit or use '.' for repo root
+  path: vps0
 
   # How often to check for changes (seconds)
   interval: 120
@@ -108,13 +109,17 @@ deploy:
 
 hooks:
   # Run before deployment (pre-flight checks)
-  pre: vps0/hooks/pre.sh
+  # Just filename, found in {path}/hooks/ directory
+  pre: pre.sh
 
   # Run after successful deployment
-  success: vps0/hooks/success.sh
+  success: success.sh
 
   # Run if deployment fails
-  failure: vps0/hooks/failure.sh
+  failure: failure.sh
+
+  # Run after successful Konta binary update
+  post_update: post_update.sh
 
 logging:
   # Log level: debug, info, warn, error
@@ -472,14 +477,14 @@ infrastructure/
 **vps0/konta.yaml** (SPB - faster, aggressive)
 ```yaml
 repository:
-  path: vps0/apps
+  path: vps0
   interval: 60      # Check every minute
 ```
 
 **vps1/konta.yaml** (GER - slower, conservative)
 ```yaml
 repository:
-  path: vps1/apps
+  path: vps1
   interval: 300     # Check every 5 minutes
 ```
 

@@ -47,7 +47,7 @@ Usage:
 
 Install Options:
   --repo URL                        GitHub repository URL (required)
-  --path PATH                       Apps path inside repo (default: apps)
+  --path PATH                       Base path in repo (contains 'apps' dir, default: repo root)
   --branch BRANCH                   Git branch (default: main)
   --interval SECONDS                Polling interval (default: 120)
   --token TOKEN                     GitHub token (or set KONTA_TOKEN env)
@@ -65,8 +65,8 @@ Update flags:
 
 Examples:
   konta install                     # Interactive setup
-  konta install --repo https://github.com/user/infra --path apps
-  konta install --repo https://github.com/talyguryn/konta --path spb/apps
+  konta install --repo https://github.com/user/infra
+  konta install --repo https://github.com/talyguryn/konta --path spb
   konta run                         # Single reconciliation
   konta run --watch                 # Watch mode (poll every N seconds)
   konta run --dry-run               # Show what would change
@@ -248,11 +248,11 @@ func installInteractive() error {
 		branch = "main"
 	}
 
-	fmt.Print("Apps path inside repo [apps]: ")
+	fmt.Print("Base path in repo containing 'apps' folder [repo root]: ")
 	appsPath, _ := reader.ReadString('\n')
 	appsPath = strings.TrimSpace(appsPath)
 	if appsPath == "" {
-		appsPath = "apps"
+		appsPath = "."
 	}
 
 	fmt.Print("Polling interval in seconds [120]: ")
@@ -694,6 +694,21 @@ func Update(currentVersion string, forceYes bool) error {
 
 	fmt.Printf("\n✅ Updated to v%s successfully!\n", latestVersion)
 
+	// Load config to get hook paths for post_update hook
+	cfg, err := config.Load()
+	if err == nil {
+		// Create hook runner and execute post_update hook
+		repoDir := filepath.Dir(cfg.Repository.Path)
+		if repoDir == "." {
+			repoDir, _ = os.Getwd()
+		}
+		hookRunner := hooks.New(repoDir, cfg.Hooks.PreAbs, cfg.Hooks.SuccessAbs, cfg.Hooks.FailureAbs, cfg.Hooks.PostUpdateAbs)
+		if err := hookRunner.RunPostUpdate(); err != nil {
+			logger.Warn("Post-update hook failed: %v", err)
+			// Don't fail the update if hook fails, just warn
+		}
+	}
+
 	// Check if daemon is running and restart it
 	statusCmd := exec.Command("systemctl", "is-active", "konta")
 	err = statusCmd.Run()
@@ -895,7 +910,7 @@ func reconcileOnce(dryRun bool, version string) error {
 	}
 
 	// Create hook runner
-	hookRunner := hooks.New(releaseDir, cfg.Hooks.Pre, cfg.Hooks.Success, cfg.Hooks.Failure)
+	hookRunner := hooks.New(releaseDir, cfg.Hooks.PreAbs, cfg.Hooks.SuccessAbs, cfg.Hooks.FailureAbs, cfg.Hooks.PostUpdateAbs)
 
 	// Run pre-hook
 	if err := hookRunner.RunPre(); err != nil {
