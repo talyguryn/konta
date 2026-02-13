@@ -798,7 +798,7 @@ func reconcileOnce(dryRun bool, version string) error {
 			lastCommitStr = lastCommitStr[:8]
 		}
 		logger.Info("No changes detected (current: %s)", lastCommitStr)
-		
+
 		// Even without changes, perform health check to ensure containers are running
 		logger.Info("Performing container health check")
 		if !dryRun {
