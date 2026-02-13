@@ -1,6 +1,6 @@
 > ⚠️ This is a public beta release. Use at your own risk. Feedback and contributions are welcome!
 
-# Konta - GitOps for Docker Compose
+# Konta - GitOps tool for Docker Compose
 
 A lightweight, idempotent deployment system for single-node servers.
 
