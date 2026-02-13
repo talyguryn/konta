@@ -992,8 +992,14 @@ func reconcileOnce(dryRun bool, version string) error {
 		logger.Info("[DRY-RUN] Would switch to commit: %s", newCommit[:8])
 	}
 
-	// Run success hook
-	if err := hookRunner.RunSuccess(); err != nil {
+	// Run success hook using current symlink (temp directory can now be cleaned)
+	if !dryRun {
+		currentLink := state.GetCurrentLink()
+		successHookRunner := hooks.New(currentLink, cfg.Hooks.PreAbs, cfg.Hooks.SuccessAbs, cfg.Hooks.FailureAbs, cfg.Hooks.PostUpdateAbs)
+		if err := successHookRunner.RunSuccess(); err != nil {
+			logger.Error("Success hook failed: %v", err)
+		}
+	} else if err := hookRunner.RunSuccess(); err != nil {
 		logger.Error("Success hook failed: %v", err)
 	}
 
