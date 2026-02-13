@@ -119,21 +119,3 @@ jobs:
           files: bin/${{ matrix.name }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-
-            ### Checksums
-
-            ```
-            $(cat dist/checksums.txt)
-            ```
-          files: |
-            dist/konta-linux
-            dist/konta-linux-arm64
-            dist/konta-darwin-amd64
-            dist/konta-darwin-arm64
-            dist/konta-windows-amd64.exe
-            dist/checksums.txt
-          draft: false
-          prerelease: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
