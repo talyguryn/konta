@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -71,33 +70,22 @@ func Load() (*types.Config, error) {
 	}
 
 	// Configure hooks with default paths if not explicitly set
-	configDir := filepath.Dir(configPath)
+	// Default hooks live at the repo root: {repo_root}/hooks/*.sh
+	hooksBase := filepath.Join(filepath.Dir(config.Repository.Path), "hooks")
 	if config.Hooks.Pre == "" {
-		config.Hooks.Pre = filepath.Join(config.Repository.Path, "hooks", "pre.sh")
+		config.Hooks.Pre = filepath.Join(hooksBase, "pre.sh")
 	}
 	if config.Hooks.Success == "" {
-		config.Hooks.Success = filepath.Join(config.Repository.Path, "hooks", "success.sh")
+		config.Hooks.Success = filepath.Join(hooksBase, "success.sh")
 	}
 	if config.Hooks.Failure == "" {
-		config.Hooks.Failure = filepath.Join(config.Repository.Path, "hooks", "failure.sh")
+		config.Hooks.Failure = filepath.Join(hooksBase, "failure.sh")
 	}
 
-	// Convert relative paths to absolute (relative to repo root, not config dir)
-	if !filepath.IsAbs(config.Hooks.Pre) && !strings.HasPrefix(config.Hooks.Pre, "/") {
-		config.Hooks.PreAbs = filepath.Join(configDir, config.Hooks.Pre)
-	} else {
-		config.Hooks.PreAbs = config.Hooks.Pre
-	}
-	if !filepath.IsAbs(config.Hooks.Success) && !strings.HasPrefix(config.Hooks.Success, "/") {
-		config.Hooks.SuccessAbs = filepath.Join(configDir, config.Hooks.Success)
-	} else {
-		config.Hooks.SuccessAbs = config.Hooks.Success
-	}
-	if !filepath.IsAbs(config.Hooks.Failure) && !strings.HasPrefix(config.Hooks.Failure, "/") {
-		config.Hooks.FailureAbs = filepath.Join(configDir, config.Hooks.Failure)
-	} else {
-		config.Hooks.FailureAbs = config.Hooks.Failure
-	}
+	// Preserve relative paths (resolved later against repo root)
+	config.Hooks.PreAbs = config.Hooks.Pre
+	config.Hooks.SuccessAbs = config.Hooks.Success
+	config.Hooks.FailureAbs = config.Hooks.Failure
 
 	// Override token from environment if set
 	if token := os.Getenv("KONTA_TOKEN"); token != "" {

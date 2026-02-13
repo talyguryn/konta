@@ -897,6 +897,7 @@ func atomicSwitch(commit string, releaseDir string) error {
 			return fmt.Errorf("failed to create symlink: %w", err)
 		}
 		logger.Info("Atomic switch completed (reused): %s", commit[:8])
+		cleanupOldReleases(releasesDir, commit)
 		return nil
 	}
 
@@ -914,7 +915,35 @@ func atomicSwitch(commit string, releaseDir string) error {
 	}
 
 	logger.Info("Atomic switch completed: %s", commit[:8])
+	cleanupOldReleases(releasesDir, commit)
 	return nil
+}
+
+// cleanupOldReleases removes old release directories to avoid unused data buildup
+func cleanupOldReleases(releasesDir string, currentCommit string) {
+	entries, err := os.ReadDir(releasesDir)
+	if err != nil {
+		logger.Warn("Failed to read releases directory: %v", err)
+		return
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+
+		name := entry.Name()
+		if name == currentCommit {
+			continue
+		}
+
+		path := filepath.Join(releasesDir, name)
+		if err := os.RemoveAll(path); err != nil {
+			logger.Warn("Failed to remove old release %s: %v", name, err)
+			continue
+		}
+		logger.Info("Removed old release: %s", name)
+	}
 }
 
 // ManageDaemon manages the systemd service
