@@ -108,9 +108,11 @@ main() {
     print_success "Latest version: v${VERSION}"
 
     # Check Docker and Docker Compose
-    if ! check_docker; then
+    if check_docker; then
+        print_success "Docker and Docker Compose detected"
+    else
         print_warning "Docker and/or Docker Compose not found."
-        echo "Install Docker автоматически? (yes/no) [yes]: " >&2
+        echo "Install Docker automatically? (yes/no) [yes]: " >&2
         read -r install_docker
         install_docker=$(echo "$install_docker" | tr '[:upper:]' '[:lower:]')
 
