@@ -1,91 +1,107 @@
-name: Release
+name: Auto Release on Version Bump
 
 on:
   push:
-    tags:
-      - "v*.*.*"
+    branches: [main]
+    paths:
+      - 'cmd/konta/main.go'
+      - '.github/workflows/release.yml'
 
 permissions:
   contents: write
 
 jobs:
-  build:
-    name: Build and Release
+  check-version:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      changed: ${{ steps.version.outputs.changed }}
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 2
+
+      - name: Check if version changed
+        id: version
+        run: |
+          CURRENT=$(grep 'const Version = ' cmd/konta/main.go | grep -oP '"\s*\K[^"]+')
+          echo "version=${CURRENT}" >> $GITHUB_OUTPUT
+
+          # Check if version changed compared to previous commit
+          if git show HEAD~1:cmd/konta/main.go 2>/dev/null | grep -q "const Version = \"${CURRENT}\""; then
+            echo "changed=false" >> $GITHUB_OUTPUT
+            echo "Version unchanged: ${CURRENT}"
+          else
+            echo "changed=true" >> $GITHUB_OUTPUT
+            echo "Version updated to: ${CURRENT}"
+          fi
+
+  release:
+    needs: check-version
+    if: needs.check-version.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - os: linux
+            arch: amd64
+            name: konta-linux
+          - os: linux
+            arch: arm64
+            name: konta-linux-arm64
+          - os: darwin
+            arch: amd64
+            name: konta-darwin-amd64
+          - os: darwin
+            arch: arm64
+            name: konta-darwin-arm64
+          - os: windows
+            arch: amd64
+            name: konta-windows-amd64.exe
+
+    steps:
+      - uses: actions/checkout@v4
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v4
         with:
-          go-version: "1.21"
+          go-version: '1.21'
 
-      - name: Get version from tag
-        id: get_version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
-
-      - name: Build binaries
+      - name: Build binary
         run: |
-          mkdir -p dist
+          mkdir -p bin
+          GOOS=${{ matrix.os }} GOARCH=${{ matrix.arch }} \
+            go build -ldflags "-s -w" -o bin/${{ matrix.name }} cmd/konta/main.go
+          chmod +x bin/${{ matrix.name }}
 
-          # Linux AMD64
-          GOOS=linux GOARCH=amd64 go build -ldflags "-s -w" -o dist/konta-linux ./cmd/konta
-
-          # Linux ARM64
-          GOOS=linux GOARCH=arm64 go build -ldflags "-s -w" -o dist/konta-linux-arm64 ./cmd/konta
-
-          # macOS AMD64 (Intel)
-          GOOS=darwin GOARCH=amd64 go build -ldflags "-s -w" -o dist/konta-darwin-amd64 ./cmd/konta
-
-          # macOS ARM64 (Apple Silicon)
-          GOOS=darwin GOARCH=arm64 go build -ldflags "-s -w" -o dist/konta-darwin-arm64 ./cmd/konta
-
-          # Windows AMD64
-          GOOS=windows GOARCH=amd64 go build -ldflags "-s -w" -o dist/konta-windows-amd64.exe ./cmd/konta
-
-          # Make binaries executable
-          chmod +x dist/konta-*
-
-          # List built binaries
-          ls -lh dist/
-
-      - name: Create checksums
-        run: |
-          cd dist
-          sha256sum konta-* > checksums.txt
-          cat checksums.txt
-
-      - name: Create Release
+      - name: Create Release (first platform only)
+        if: matrix.os == 'linux' && matrix.arch == 'amd64'
         uses: softprops/action-gh-release@v2
         with:
-          name: Release ${{ steps.get_version.outputs.VERSION }}
+          tag_name: v${{ needs.check-version.outputs.version }}
+          name: Konta v${{ needs.check-version.outputs.version }}
+          draft: false
+          prerelease: false
           body: |
-            ## Konta ${{ steps.get_version.outputs.VERSION }}
+            ## Konta v${{ needs.check-version.outputs.version }}
+
+            Automatic release triggered by version bump in code.
 
             ### Installation
 
             **Linux (AMD64):**
             ```bash
-            curl -L https://github.com/talyguryn/konta/releases/download/${{ steps.get_version.outputs.VERSION }}/konta-linux -o konta
+            curl -L https://github.com/talyguryn/konta/releases/download/v${{ needs.check-version.outputs.version }}/konta-linux -o konta
             chmod +x konta
-            sudo mv konta /usr/local/bin/
+            sudo mv konta /usr/local/bin/konta
+            sudo konta daemon enable
             ```
 
             **macOS (Apple Silicon):**
             ```bash
-            curl -L https://github.com/talyguryn/konta/releases/download/${{ steps.get_version.outputs.VERSION }}/konta-darwin-arm64 -o konta
+            curl -L https://github.com/talyguryn/konta/releases/download/v${{ needs.check-version.outputs.version }}/konta-darwin-arm64 -o konta
             chmod +x konta
-            sudo mv konta /usr/local/bin/
-            ```
-
-            **macOS (Intel):**
-            ```bash
-            curl -L https://github.com/talyguryn/konta/releases/download/${{ steps.get_version.outputs.VERSION }}/konta-darwin-amd64 -o konta
-            chmod +x konta
-            sudo mv konta /usr/local/bin/
+            sudo mv konta /usr/local/bin/konta
             ```
 
             ### Update existing installation
@@ -93,10 +109,17 @@ jobs:
             ```bash
             konta update
             ```
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-            ### What's Changed
+      - name: Upload artifacts
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.check-version.outputs.version }}
+          files: bin/${{ matrix.name }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-            See [CHANGELOG.md](https://github.com/talyguryn/konta/blob/main/CHANGELOG.md) for details.
 
             ### Checksums
 
