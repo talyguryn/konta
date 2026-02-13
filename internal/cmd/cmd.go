@@ -541,11 +541,25 @@ type githubRelease struct {
 }
 
 func fetchLatestRelease() (*githubRelease, error) {
-	resp, err := http.Get("https://api.github.com/repos/talyguryn/konta/releases/latest")
+	req, err := http.NewRequest("GET", "https://api.github.com/repos/talyguryn/konta/releases/latest", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %v", err)
+	}
+
+	// Use GitHub token if available for higher rate limits (5000/hour vs 60/hour)
+	if token := os.Getenv("KONTA_TOKEN"); token != "" {
+		req.Header.Set("Authorization", fmt.Sprintf("token %s", token))
+	}
+
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check for updates: %v", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode == 403 {
+		return nil, fmt.Errorf("GitHub API rate limited (403). Check KONTA_TOKEN env var for auth")
+	}
 
 	if resp.StatusCode != 200 {
 		return nil, fmt.Errorf("GitHub API returned status %d", resp.StatusCode)

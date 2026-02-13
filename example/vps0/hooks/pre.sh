@@ -13,26 +13,22 @@ if ! docker ps > /dev/null 2>&1; then
 fi
 echo "✓ Docker daemon is running"
 
-# Check docker-compose syntax
-if ! docker compose config > /dev/null 2>&1; then
-    echo "❌ docker-compose.yml has syntax errors"
-    exit 1
+# Check docker-compose syntax for each app
+APPS_DIR="example/vps0/apps"
+if [ -d "$APPS_DIR" ]; then
+    for app_dir in "$APPS_DIR"/*/; do
+        if [ -f "${app_dir}docker-compose.yml" ]; then
+            app_name=$(basename "$app_dir")
+            if ! docker compose -f "${app_dir}docker-compose.yml" config > /dev/null 2>&1; then
+                echo "❌ docker-compose.yml syntax error in $app_name"
+                docker compose -f "${app_dir}docker-compose.yml" config 2>&1 | head -20
+                exit 1
+            fi
+        fi
+    done
+    echo "✓ Docker Compose syntax is valid for all apps"
+else
+    echo "⚠️  Apps directory not found: $APPS_DIR"
 fi
-echo "✓ Docker Compose syntax is valid"
-
-# Check disk space (warn if >80%)
-DISK_USAGE=$(df /var/lib/docker | awk 'NR==2 {print $5}' | grep -oE '[0-9]+')
-if [ "$DISK_USAGE" -gt 80 ]; then
-    echo "⚠️  Disk usage is high: ${DISK_USAGE}%"
-fi
-echo "✓ Disk space check passed"
-
-# Check internet connectivity
-if ! ping -c 1 8.8.8.8 > /dev/null 2>&1; then
-    echo "⚠️  Internet connectivity might be limited"
-fi
-echo "✓ Network check passed"
-
-echo ""
 echo "All pre-deployment checks passed! ✅"
 echo "Proceeding with deployment..."
