@@ -839,6 +839,23 @@ func reconcileOnce(dryRun bool, version string) error {
 		logger.Info("Reconciling all projects (first deployment or change detection unavailable)")
 	}
 
+	// Update state before processing to avoid re-trying failed deployments
+	// This ensures that if pre-hook or deployment fails, we don't retry the same commit on next run
+	if !dryRun {
+		// Store the projects we're about to process (or empty if not yet determined)
+		projectsToProcess := changedProjects
+		if projectsToProcess == nil {
+			// We'll reconcile all projects, but we don't know the list yet
+			// Update with empty list for now, will update again with actual list after reconciliation
+			projectsToProcess = []string{}
+		}
+		if err := state.UpdateWithProjects(newCommit, projectsToProcess); err != nil {
+			logger.Error("Failed to update state: %v", err)
+			return err
+		}
+		logger.Debug("State updated to commit %s before processing", newCommit[:8])
+	}
+
 	// Create hook runner
 	hookRunner := hooks.New(releaseDir, cfg.Hooks.Pre, cfg.Hooks.Success, cfg.Hooks.Failure)
 
@@ -867,7 +884,7 @@ func reconcileOnce(dryRun bool, version string) error {
 			return err
 		}
 
-		// Update state with reconciled projects
+		// Update state with final list of reconciled projects
 		if err := state.UpdateWithProjects(newCommit, reconciledProjects); err != nil {
 			logger.Error("Failed to update state: %v", err)
 			return err
