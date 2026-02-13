@@ -416,9 +416,9 @@ func Update(currentVersion string) error {
 }
 
 // Run executes reconciliation once or in watch mode
-func Run(dryRun bool, watch bool) error {
+func Run(dryRun bool, watch bool, version string) error {
 	// Execute reconciliation once
-	if err := reconcileOnce(dryRun); err != nil && !watch {
+	if err := reconcileOnce(dryRun, version); err != nil && !watch {
 		// Only return error if not in watch mode
 		// In watch mode, we log error and continue
 		return err
@@ -434,12 +434,29 @@ func Run(dryRun bool, watch bool) error {
 		logger.Info("Watch mode enabled. Polling every %d seconds (Ctrl+C to stop)", cfg.Repository.Interval)
 
 		// First reconciliation already done above, now enter polling loop
-		ticker := time.NewTicker(time.Duration(cfg.Repository.Interval) * time.Second)
+		var ticker *time.Ticker
+		ticker = time.NewTicker(time.Duration(cfg.Repository.Interval) * time.Second)
 		defer ticker.Stop()
 
 		// Infinite loop - exit only on signal (Ctrl+C) or systemd stop
 		for range ticker.C {
-			if err := reconcileOnce(false); err != nil {
+			// Reload config on each iteration to pick up interval changes
+			newCfg, err := config.Load()
+			if err != nil {
+				logger.Error("Failed to reload config: %v", err)
+				// Continue with previous config
+			} else if newCfg.Repository.Interval != cfg.Repository.Interval {
+				// Interval changed, reset ticker
+				logger.Info("Config updated: polling interval changed from %d to %d seconds", 
+					cfg.Repository.Interval, newCfg.Repository.Interval)
+				ticker.Stop()
+				ticker = time.NewTicker(time.Duration(newCfg.Repository.Interval) * time.Second)
+				cfg = newCfg
+			} else {
+				cfg = newCfg
+			}
+
+			if err := reconcileOnce(false, version); err != nil {
 				logger.Error("Deployment error: %v", err)
 				// Continue on error, don't exit
 			}
@@ -450,13 +467,14 @@ func Run(dryRun bool, watch bool) error {
 }
 
 // reconcileOnce performs a single reconciliation cycle
-func reconcileOnce(dryRun bool) error {
+func reconcileOnce(dryRun bool, version string) error {
 	l, err := lock.Acquire()
 	if err != nil {
 		return err
 	}
 	defer func() { _ = l.Release() }()
 
+	logger.Info("Konta v%s", version)
 	cfg, err := config.Load()
 	if err != nil {
 		return err

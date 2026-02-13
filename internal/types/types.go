@@ -20,16 +20,20 @@ type RepositoryConf struct {
 
 // DeployConf represents deployment configuration
 type DeployConf struct {
-	Atomic         bool `yaml:"atomic,omitempty"`
-	Parallel       bool `yaml:"parallel,omitempty"`
-	DryRun         bool `yaml:"dry_run,omitempty"`
+	Atomic bool `yaml:"atomic,omitempty"`
+	Parallel bool `yaml:"parallel,omitempty"`
+	DryRun bool `yaml:"dry_run,omitempty"`
+	// RemoveOrphans is always enabled by default to keep disk space clean
 }
 
 // HooksConf represents hooks configuration
 type HooksConf struct {
-	Pre     string `yaml:"pre,omitempty"`
-	Success string `yaml:"success,omitempty"`
-	Failure string `yaml:"failure,omitempty"`
+	Pre        string `yaml:"pre,omitempty"`
+	Success    string `yaml:"success,omitempty"`
+	Failure    string `yaml:"failure,omitempty"`
+	PreAbs     string `yaml:"-"` // Absolute path to pre hook (set by config loader)
+	SuccessAbs string `yaml:"-"` // Absolute path to success hook
+	FailureAbs string `yaml:"-"` // Absolute path to failure hook
 }
 
 // LoggingConf represents logging configuration

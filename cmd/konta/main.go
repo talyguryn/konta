@@ -61,7 +61,7 @@ func main() {
 				watch = true
 			}
 		}
-		if err := cmd.Run(dryRun, watch); err != nil {
+		if err := cmd.Run(dryRun, watch, Version); err != nil {
 			logger.Fatal("Run failed: %v", err)
 		}
 

@@ -1,9 +1,12 @@
 package config
 
 import (
+	"crypto/md5"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -20,7 +23,6 @@ var (
 	}
 )
 
-// Load loads the configuration
 func Load() (*types.Config, error) {
 	configPath := ""
 
@@ -69,12 +71,68 @@ func Load() (*types.Config, error) {
 		return nil, fmt.Errorf("repository.url is required")
 	}
 
+	// Configure hooks with default paths if not explicitly set
+	configDir := filepath.Dir(configPath)
+	if config.Hooks.Pre == "" {
+		config.Hooks.Pre = filepath.Join(config.Repository.Path, "hooks", "pre.sh")
+	}
+	if config.Hooks.Success == "" {
+		config.Hooks.Success = filepath.Join(config.Repository.Path, "hooks", "success.sh")
+	}
+	if config.Hooks.Failure == "" {
+		config.Hooks.Failure = filepath.Join(config.Repository.Path, "hooks", "failure.sh")
+	}
+
+	// Convert relative paths to absolute (relative to repo root, not config dir)
+	if !filepath.IsAbs(config.Hooks.Pre) && !strings.HasPrefix(config.Hooks.Pre, "/") {
+		config.Hooks.PreAbs = filepath.Join(configDir, config.Hooks.Pre)
+	} else {
+		config.Hooks.PreAbs = config.Hooks.Pre
+	}
+	if !filepath.IsAbs(config.Hooks.Success) && !strings.HasPrefix(config.Hooks.Success, "/") {
+		config.Hooks.SuccessAbs = filepath.Join(configDir, config.Hooks.Success)
+	} else {
+		config.Hooks.SuccessAbs = config.Hooks.Success
+	}
+	if !filepath.IsAbs(config.Hooks.Failure) && !strings.HasPrefix(config.Hooks.Failure, "/") {
+		config.Hooks.FailureAbs = filepath.Join(configDir, config.Hooks.Failure)
+	} else {
+		config.Hooks.FailureAbs = config.Hooks.Failure
+	}
+
 	// Override token from environment if set
 	if token := os.Getenv("KONTA_TOKEN"); token != "" {
 		config.Repository.Token = token
 	}
 
+	// Validate config and save lock file
+	if err := validateAndLockConfig(config, configPath); err != nil {
+		return nil, err
+	}
+
 	return config, nil
+}
+
+// validateAndLockConfig validates the config and creates a lock file to prevent loading bad configs
+func validateAndLockConfig(config *types.Config, configPath string) error {
+	lockPath := configPath + ".lock"
+
+	// Create lock file with current config hash
+	data, _ := yaml.Marshal(config)
+	configHash := fmt.Sprintf("%x", md5.Sum([]byte(data)))
+
+	lockData := map[string]interface{}{
+		"config_hash": configHash,
+		"timestamp":   time.Now().Format("2006-01-02 15:04:05"),
+	}
+
+	lockBytes, _ := yaml.Marshal(lockData)
+	if err := os.WriteFile(lockPath, lockBytes, 0644); err != nil {
+		logger.Warn("Failed to write config lock file: %v", err)
+		// Don't fail on lock file error, just warn
+	}
+
+	return nil
 }
 
 // Save saves the configuration to the default location
