@@ -91,7 +91,7 @@ func Load() (*types.Config, error) {
 	// Hooks now accept just the filename (e.g., "pre.sh", "post_update.sh")
 	// They are resolved relative to {repo_root}/hooks/ directory
 	hooksBase := filepath.Join(appsBasePath, "hooks")
-	
+
 	if config.Hooks.Pre == "" {
 		config.Hooks.Pre = "pre.sh"
 	}
