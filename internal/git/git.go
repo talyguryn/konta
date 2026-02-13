@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	gogit "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
@@ -38,7 +39,7 @@ func Clone(config *types.RepositoryConf, targetDir string) (string, error) {
 		URL:           config.URL,
 		ReferenceName: plumbing.NewBranchReferenceName(config.Branch),
 		SingleBranch:  true,
-		Depth:         1,
+		Depth:         50, // Get recent history to allow change detection between commits
 		Auth:          auth,
 	})
 	if err != nil {
@@ -144,3 +145,101 @@ func ValidateComposePath(repoDir string, appsPath string) error {
 
 	return nil
 }
+
+// GetChangedProjects returns the list of projects that changed between two commits
+// Returns nil (reconcile all) if oldCommit is empty
+// Returns empty slice if no changes detected
+// Returns nil with error if detection fails
+func GetChangedProjects(repoDir string, appsPath string, oldCommit string, newCommit string) ([]string, error) {
+	// If no previous commit, all projects are considered changed
+	if oldCommit == "" {
+		return nil, nil // First deployment
+	}
+
+	if oldCommit == newCommit {
+		return []string{}, nil // Same commit, no changes
+	}
+
+	repo, err := gogit.PlainOpen(repoDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open repository: %w", err)
+	}
+
+	// Get old commit object
+	oldHash := plumbing.NewHash(oldCommit)
+	oldCommitObj, err := repo.CommitObject(oldHash)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get old commit %s: %w", oldCommit, err)
+	}
+
+	// Get new commit object
+	newHash := plumbing.NewHash(newCommit)
+	newCommitObj, err := repo.CommitObject(newHash)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get new commit %s: %w", newCommit, err)
+	}
+
+	// Get tree objects
+	oldTree, err := oldCommitObj.Tree()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get old tree: %w", err)
+	}
+
+	newTree, err := newCommitObj.Tree()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get new tree: %w", err)
+	}
+
+	// Get changes between trees
+	changes, err := oldTree.Diff(newTree)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get diff: %w", err)
+	}
+
+	// Track which projects were affected
+	changedProjects := make(map[string]bool)
+	// Git paths always use forward slashes, normalize appsPath
+	prefix := strings.TrimSuffix(strings.ReplaceAll(appsPath, "\\", "/"), "/") + "/"
+
+	logger.Debug("Looking for changes under prefix: %s", prefix)
+
+	for _, change := range changes {
+		// Check both "from" and "to" paths in case of renames
+		paths := []string{change.From.Name, change.To.Name}
+
+		for _, path := range paths {
+			if path == "" {
+				continue
+			}
+
+			logger.Debug("Checking changed file: %s", path)
+
+			// Check if the changed file is under the apps path (git always uses /)
+			if strings.HasPrefix(path, prefix) {
+				// Extract project name (first directory after apps path)
+				relPath := strings.TrimPrefix(path, prefix)
+				parts := strings.Split(relPath, "/") // Git always uses forward slash
+				if len(parts) > 0 && parts[0] != "" {
+					projectName := parts[0]
+					changedProjects[projectName] = true
+					logger.Debug("Detected change in project: %s (file: %s)", projectName, path)
+				}
+			}
+		}
+	}
+
+	// Convert map to slice
+	result := make([]string, 0, len(changedProjects))
+	for project := range changedProjects {
+		result = append(result, project)
+	}
+
+	if len(result) == 0 {
+		logger.Info("Git diff found %d file changes, but none affect projects under %s", len(changes), appsPath)
+	} else {
+		logger.Info("Detected changes in %d project(s): %v", len(result), result)
+	}
+
+	return result, nil
+}
+

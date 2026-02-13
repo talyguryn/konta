@@ -100,13 +100,38 @@ func Save(state *types.State) error {
 
 // Update updates the state after successful deployment
 func Update(commit string) error {
-	state := &types.State{
-		LastCommit:     commit,
-		LastDeployTime: time.Now().Format("2006-01-02 15:04:05"),
-		Version:        "0.1.0",
+	return UpdateWithProjects(commit, nil)
+}
+
+// UpdateWithProjects updates the state after successful deployment with per-project tracking
+func UpdateWithProjects(commit string, reconciledProjects []string) error {
+	// Load existing state to preserve project states
+	currentState, err := Load()
+	if err != nil {
+		logger.Warn("Failed to load existing state: %v", err)
+		currentState = &types.State{}
 	}
 
-	if err := Save(state); err != nil {
+	// Initialize projects map if nil
+	if currentState.Projects == nil {
+		currentState.Projects = make(map[string]types.ProjectState)
+	}
+
+	// Update the global state
+	currentState.LastCommit = commit
+	currentState.LastDeployTime = time.Now().Format("2006-01-02 15:04:05")
+	currentState.Version = "0.1.0"
+
+	// Update per-project state for reconciled projects
+	deployTime := time.Now().Format("2006-01-02 15:04:05")
+	for _, project := range reconciledProjects {
+		currentState.Projects[project] = types.ProjectState{
+			LastCommit:     commit,
+			LastDeployTime: deployTime,
+		}
+	}
+
+	if err := Save(currentState); err != nil {
 		return err
 	}
 

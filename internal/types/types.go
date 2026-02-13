@@ -41,7 +41,14 @@ type LoggingConf struct {
 
 // State represents deployment state
 type State struct {
-	LastCommit     string `json:"last_commit"`
-	LastDeployTime string `json:"last_deploy_time"`
-	Version        string `json:"version"`
+	LastCommit     string                 `json:"last_commit"`
+	LastDeployTime string                 `json:"last_deploy_time"`
+	Version        string                 `json:"version"`
+	Projects       map[string]ProjectState `json:"projects,omitempty"` // Per-project state for change detection
+}
+
+// ProjectState represents the state of an individual project
+type ProjectState struct {
+	LastCommit     string `json:"last_commit"`      // Last commit that affected this project
+	LastDeployTime string `json:"last_deploy_time"` // When this project was last deployed
 }

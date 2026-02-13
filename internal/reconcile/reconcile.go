@@ -15,30 +15,49 @@ import (
 
 // Reconciler manages the reconciliation process
 type Reconciler struct {
-	config    *types.Config
-	repoDir   string
-	dryRun    bool
-	appsDir   string
+	config         *types.Config
+	repoDir        string
+	dryRun         bool
+	appsDir        string
+	changedProjects map[string]bool // Track which projects have changes
 }
 
 // New creates a new reconciler
 func New(config *types.Config, repoDir string, dryRun bool) *Reconciler {
 	return &Reconciler{
-		config:  config,
-		repoDir: repoDir,
-		dryRun:  dryRun,
-		appsDir: filepath.Join(repoDir, config.Repository.Path),
+		config:         config,
+		repoDir:        repoDir,
+		dryRun:         dryRun,
+		appsDir:        filepath.Join(repoDir, config.Repository.Path),
+		changedProjects: make(map[string]bool),
 	}
 }
 
+// SetChangedProjects configures which projects have changes and should be reconciled
+func (r *Reconciler) SetChangedProjects(projects []string) {
+	if projects == nil {
+		// nil means reconcile all projects (first run or error detecting changes)
+		r.changedProjects = nil
+		logger.Debug("Reconciler configured to process all projects")
+		return
+	}
+
+	r.changedProjects = make(map[string]bool)
+	for _, project := range projects {
+		r.changedProjects[project] = true
+	}
+	logger.Debug("Reconciler configured to process %d specific projects: %v", len(projects), projects)
+}
+
 // Reconcile performs the reconciliation
-func (r *Reconciler) Reconcile() error {
+// Returns the list of projects that were actually reconciled
+func (r *Reconciler) Reconcile() ([]string, error) {
 	logger.Info("Starting reconciliation")
 
 	// Get desired projects from git
 	desired, err := r.getDesiredProjects()
 	if err != nil {
-		return fmt.Errorf("failed to get desired projects: %w", err)
+		return nil, fmt.Errorf("failed to get desired projects: %w", err)
 	}
 
 	logger.Info("Found %d desired projects", len(desired))
@@ -46,16 +65,26 @@ func (r *Reconciler) Reconcile() error {
 	// Get currently running projects
 	running, err := r.getRunningProjects()
 	if err != nil {
-		return fmt.Errorf("failed to get running projects: %w", err)
+		return nil, fmt.Errorf("failed to get running projects: %w", err)
 	}
 
 	logger.Info("Found %d running projects", len(running))
 
+	// Track which projects were reconciled
+	reconciledProjects := []string{}
+
 	// Reconcile desired projects
 	for _, project := range desired {
-		if err := r.reconcileProject(project); err != nil {
-			return fmt.Errorf("failed to reconcile project %s: %w", project, err)
+		// Skip projects that haven't changed (unless changedProjects is nil, meaning reconcile all)
+		if r.changedProjects != nil && !r.changedProjects[project] {
+			logger.Info("Skipping project %s (no changes detected)", project)
+			continue
 		}
+
+		if err := r.reconcileProject(project); err != nil {
+			return reconciledProjects, fmt.Errorf("failed to reconcile project %s: %w", project, err)
+		}
+		reconciledProjects = append(reconciledProjects, project)
 	}
 
 	// Remove orphan projects (only Konta-managed ones)
@@ -75,7 +104,7 @@ func (r *Reconciler) Reconcile() error {
 	}
 
 	logger.Info("Reconciliation complete")
-	return nil
+	return reconciledProjects, nil
 }
 
 func (r *Reconciler) getDesiredProjects() ([]string, error) {

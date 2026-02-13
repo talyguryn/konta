@@ -505,6 +505,24 @@ func reconcileOnce(dryRun bool) error {
 		return err
 	}
 
+	// Detect which projects have changed
+	changedProjects, err := git.GetChangedProjects(releaseDir, cfg.Repository.Path, currentState.LastCommit, newCommit)
+	if err != nil {
+		logger.Warn("Failed to detect changed projects: %v (will reconcile all)", err)
+		changedProjects = nil // nil means reconcile all
+	}
+
+	if changedProjects != nil && len(changedProjects) == 0 {
+		logger.Info("No project changes detected in %s, skipping reconciliation", cfg.Repository.Path)
+		return nil
+	}
+
+	if changedProjects != nil {
+		logger.Info("Will reconcile %d changed project(s): %v", len(changedProjects), changedProjects)
+	} else {
+		logger.Info("Reconciling all projects (first deployment or change detection unavailable)")
+	}
+
 	// Create hook runner
 	hookRunner := hooks.New(releaseDir, cfg.Hooks.Pre, cfg.Hooks.Success, cfg.Hooks.Failure)
 
@@ -517,7 +535,9 @@ func reconcileOnce(dryRun bool) error {
 
 	// Perform reconciliation
 	reconciler := reconcile.New(cfg, releaseDir, dryRun)
-	if err := reconciler.Reconcile(); err != nil {
+	reconciler.SetChangedProjects(changedProjects)
+	reconciledProjects, err := reconciler.Reconcile()
+	if err != nil {
 		logger.Error("Reconciliation failed: %v", err)
 		_ = hookRunner.RunFailure()
 		return err
@@ -531,8 +551,8 @@ func reconcileOnce(dryRun bool) error {
 			return err
 		}
 
-		// Update state
-		if err := state.Update(newCommit); err != nil {
+		// Update state with reconciled projects
+		if err := state.UpdateWithProjects(newCommit, reconciledProjects); err != nil {
 			logger.Error("Failed to update state: %v", err)
 			return err
 		}
