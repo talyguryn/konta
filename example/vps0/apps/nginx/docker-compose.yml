@@ -14,9 +14,3 @@ services:
 
     ports:
       - "80:80"
-
-    deploy:
-      resources:
-        limits:
-          cpus: '0.1'
-          memory: 20M
