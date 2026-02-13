@@ -2,9 +2,6 @@
 # Post-update hook
 # Runs after successful Konta binary update
 
-echo "=== Konta updated successfully ==="
-echo "Timestamp: $(date)"
-
 # Example: Send notification to team
 # curl -X POST https://hooks.slack.com/services/YOUR/WEBHOOK \
 #   -d '{"text":"Konta has been updated to the latest version!"}' \

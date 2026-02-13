@@ -39,7 +39,7 @@ func Load() (*types.Config, error) {
 		return nil, err
 	}
 
-	logger.Info("Loading config from: %s", configPath)
+	logger.Debug("Loading config from: %s", configPath)
 
 	data, err := os.ReadFile(configPath)
 	if err != nil {

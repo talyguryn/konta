@@ -66,7 +66,7 @@ func (r *Runner) run(hookType string) error {
 		return nil
 	}
 
-	logger.Info("Running %s hook: %s", hookType, hookPath)
+	logger.Debug("Running %s hook: %s", hookType, hookPath)
 
 	cmd := exec.Command("bash", hookPath)
 	cmd.Dir = r.repoDir
@@ -77,6 +77,6 @@ func (r *Runner) run(hookType string) error {
 		return fmt.Errorf("%s hook failed: %w", hookType, err)
 	}
 
-	logger.Info("%s hook executed successfully", hookType)
+	logger.Debug("%s hook executed successfully", hookType)
 	return nil
 }
