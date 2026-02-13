@@ -64,12 +64,18 @@ Konta is a simple tool that:
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/talyguryn/konta/main/scripts/install.sh)"
 ```
 
-**Or download manually and install to /usr/local/bin:**
+**Or download manually:**
 ```bash
-curl -fsSL https://github.com/talyguryn/konta/releases/download/v0.1.6/konta-linux -o /usr/local/bin/konta
+# Linux (AMD64)
+curl -fsSL https://github.com/talyguryn/konta/releases/latest/download/konta-linux -o /usr/local/bin/konta
+
+# macOS (Apple Silicon)
+# curl -fsSL https://github.com/talyguryn/konta/releases/latest/download/konta-darwin-arm64 -o /usr/local/bin/konta
+
+# macOS (Intel)
+# curl -fsSL https://github.com/talyguryn/konta/releases/latest/download/konta-darwin-amd64 -o /usr/local/bin/konta
+
 chmod +x /usr/local/bin/konta
-# For macOS (Apple Silicon):
-# curl -fsSL https://github.com/talyguryn/konta/releases/download/v0.1.6/konta-darwin-arm64 -o /usr/local/bin/konta
 ```
 
 ### 2. Setup with One Command
@@ -144,7 +150,7 @@ repository:
 konta_updates: notify  # auto|notify|false - manage update checks
 hooks:
   pre: spb/hooks/pre.sh           # Optional
-  success: spb/hooks/success.sh   # Optional  
+  success: spb/hooks/success.sh   # Optional
   failure: spb/hooks/failure.sh   # Optional
 deploy:
   atomic: true
