@@ -829,7 +829,6 @@ func Update(currentVersion string, forceYes bool) error {
 	}
 
 	latestVersion := strings.TrimPrefix(release.TagName, "v")
-	fmt.Printf("Latest version: v%s\n", latestVersion)
 
 	if latestVersion == currentVersion {
 		fmt.Println("✅ Already running the latest version!")
@@ -862,7 +861,7 @@ func Update(currentVersion string, forceYes bool) error {
 		return err
 	}
 
-	fmt.Printf("\n✅ Updated to v%s successfully!\n", latestVersion)
+	fmt.Printf("✅ Updated to v%s successfully!\n", latestVersion)
 
 	runPostUpdateHook()
 
