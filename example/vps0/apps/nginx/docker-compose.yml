@@ -15,7 +15,10 @@ services:
       - "80:80"
 
     deploy:
+      mode: replicated
       replicas: 3
+      endpoint_mode: vip
+
       resources:
         limits:
           cpus: "0.5"
