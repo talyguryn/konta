@@ -821,7 +821,7 @@ func autoUpdate(currentVersion string, release *githubRelease) error {
 
 func Update(currentVersion string, forceYes bool) error {
 	fmt.Printf("Current version: v%s\n", currentVersion)
-	fmt.Println("Checking for updates from GitHub...")
+	fmt.Println("Checking for updates from GitHub...\n")
 
 	release, err := fetchLatestRelease()
 	if err != nil {
@@ -831,11 +831,11 @@ func Update(currentVersion string, forceYes bool) error {
 	latestVersion := strings.TrimPrefix(release.TagName, "v")
 
 	if latestVersion == currentVersion {
-		fmt.Println("\n✅ Already running the latest version!")
+		fmt.Println("✅ Already running the latest version!")
 		return nil
 	}
 
-	fmt.Printf("\n🎉 New version available: v%s\n", latestVersion)
+	fmt.Printf("🎉 New version available: v%s\n", latestVersion)
 
 	if !forceYes {
 		fmt.Print("Download and install? [Y/n]: ")
