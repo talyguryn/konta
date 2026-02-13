@@ -447,7 +447,7 @@ func Run(dryRun bool, watch bool, version string) error {
 				// Continue with previous config
 			} else if newCfg.Repository.Interval != cfg.Repository.Interval {
 				// Interval changed, reset ticker
-				logger.Info("Config updated: polling interval changed from %d to %d seconds", 
+				logger.Info("Config updated: polling interval changed from %d to %d seconds",
 					cfg.Repository.Interval, newCfg.Repository.Interval)
 				ticker.Stop()
 				ticker = time.NewTicker(time.Duration(newCfg.Repository.Interval) * time.Second)
