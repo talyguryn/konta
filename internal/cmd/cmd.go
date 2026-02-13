@@ -693,8 +693,32 @@ func Update(currentVersion string, forceYes bool) error {
 	}
 
 	fmt.Printf("\n✅ Updated to v%s successfully!\n", latestVersion)
-	fmt.Println("\nIf you have the daemon running, restart it:")
-	fmt.Println("  sudo konta restart")
+
+	// Check if daemon is running and restart it
+	statusCmd := exec.Command("systemctl", "is-active", "konta")
+	err = statusCmd.Run()
+	isDaemonRunning := err == nil
+
+	if isDaemonRunning {
+		fmt.Println("\nDaemon is running. Attempting automatic restart to apply new version...")
+		if os.Getuid() != 0 {
+			fmt.Println("\n⚠️  Root privileges required to restart daemon.")
+			fmt.Println("Restart manually with: sudo konta restart")
+			return nil
+		}
+
+		// Restart the daemon
+		restartCmd := exec.Command("systemctl", "restart", "konta")
+		if err := restartCmd.Run(); err != nil {
+			fmt.Printf("⚠️  Failed to restart daemon: %v\n", err)
+			fmt.Println("Restart manually with: sudo konta restart")
+			return nil
+		}
+		fmt.Println("✅ Daemon restarted with new version!")
+	} else {
+		fmt.Println("\nDaemon is not running. Start it when ready:")
+		fmt.Println("  sudo konta start")
+	}
 
 	return nil
 }
