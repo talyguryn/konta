@@ -506,113 +506,78 @@ func CheckForUpdates(currentVersion string, updateBehavior string) error {
 		return nil
 	}
 
-	// Fetch latest release from GitHub API
-	resp, err := http.Get("https://api.github.com/repos/talyguryn/konta/releases/latest")
+	release, err := fetchLatestRelease()
 	if err != nil {
 		logger.Debug("Failed to check for updates: %v", err)
 		return nil // Don't fail on update check errors
 	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != 200 {
-		logger.Debug("GitHub API returned status %d", resp.StatusCode)
-		return nil
-	}
-
-	var release struct {
-		TagName string `json:"tag_name"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
-		logger.Debug("Failed to parse release info: %v", err)
-		return nil
-	}
 
 	latestVersion := strings.TrimPrefix(release.TagName, "v")
-
 	if latestVersion == currentVersion {
 		return nil // Already on latest
 	}
 
-	// Only notify, don't auto-update
 	if updateBehavior == "notify" {
 		logger.Info("New Konta version available: v%s (current: v%s). Run 'konta update' to install.", latestVersion, currentVersion)
+		return nil
+	}
+
+	if updateBehavior == "auto" {
+		if err := autoUpdate(currentVersion, release); err != nil {
+			logger.Warn("Auto-update failed: %v", err)
+		}
 		return nil
 	}
 
 	return nil
 }
 
-func Update(currentVersion string) error {
-	fmt.Printf("Current version: v%s\n", currentVersion)
-	fmt.Println("Checking for updates from GitHub...")
+type githubRelease struct {
+	TagName string `json:"tag_name"`
+	Assets  []struct {
+		Name               string `json:"name"`
+		BrowserDownloadURL string `json:"browser_download_url"`
+	} `json:"assets"`
+}
 
-	// Fetch latest release from GitHub API
+func fetchLatestRelease() (*githubRelease, error) {
 	resp, err := http.Get("https://api.github.com/repos/talyguryn/konta/releases/latest")
 	if err != nil {
-		return fmt.Errorf("failed to check for updates: %v", err)
+		return nil, fmt.Errorf("failed to check for updates: %v", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != 200 {
-		return fmt.Errorf("GitHub API returned status %d", resp.StatusCode)
+		return nil, fmt.Errorf("GitHub API returned status %d", resp.StatusCode)
 	}
 
-	var release struct {
-		TagName string `json:"tag_name"`
-		Assets  []struct {
-			Name               string `json:"name"`
-			BrowserDownloadURL string `json:"browser_download_url"`
-		} `json:"assets"`
-	}
-
+	var release githubRelease
 	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
-		return fmt.Errorf("failed to parse release info: %v", err)
+		return nil, fmt.Errorf("failed to parse release info: %v", err)
 	}
 
-	latestVersion := strings.TrimPrefix(release.TagName, "v")
-	fmt.Printf("Latest version: v%s\n", latestVersion)
+	return &release, nil
+}
 
-	if latestVersion == currentVersion {
-		fmt.Println("✅ Already running the latest version!")
-		return nil
-	}
-
-	fmt.Printf("\n🎉 New version available: v%s\n", latestVersion)
-	fmt.Print("Download and install? (yes/no): ")
-
-	reader := bufio.NewReader(os.Stdin)
-	answer, _ := reader.ReadString('\n')
-	answer = strings.TrimSpace(strings.ToLower(answer))
-
-	if answer != "yes" && answer != "y" {
-		fmt.Println("Update cancelled")
-		return nil
-	}
-
-	// Determine the correct binary name based on OS/ARCH
+func getBinaryName() string {
 	binaryName := fmt.Sprintf("konta-%s-%s", runtime.GOOS, runtime.GOARCH)
 	if runtime.GOOS == "linux" && runtime.GOARCH == "amd64" {
 		binaryName = "konta-linux"
 	}
+	return binaryName
+}
 
-	// Find the asset URL
-	var downloadURL string
+func findDownloadURL(release *githubRelease, binaryName string) string {
 	for _, asset := range release.Assets {
 		if asset.Name == binaryName {
-			downloadURL = asset.BrowserDownloadURL
-			break
+			return asset.BrowserDownloadURL
 		}
 	}
+	return ""
+}
 
-	if downloadURL == "" {
-		return fmt.Errorf("no binary found for %s/%s", runtime.GOOS, runtime.GOARCH)
-	}
-
-	fmt.Printf("\nDownloading %s...\n", binaryName)
-
-	// Download the new binary
-	resp, err = http.Get(downloadURL)
+func downloadAndInstall(downloadURL string, latestVersion string) error {
+	resp, err := http.Get(downloadURL)
 	if err != nil {
 		return fmt.Errorf("download failed: %v", err)
 	}
@@ -622,13 +587,11 @@ func Update(currentVersion string) error {
 		return fmt.Errorf("download returned status %d", resp.StatusCode)
 	}
 
-	// Get current executable path
 	exePath, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("failed to get executable path: %v", err)
 	}
 
-	// Download to temp file
 	tmpFile := exePath + ".new"
 	out, err := os.Create(tmpFile)
 	if err != nil {
@@ -645,28 +608,86 @@ func Update(currentVersion string) error {
 		return fmt.Errorf("download failed: %v", err)
 	}
 
-	// Make executable
 	if err := os.Chmod(tmpFile, 0755); err != nil {
 		_ = os.Remove(tmpFile)
 		return fmt.Errorf("failed to set permissions: %v", err)
 	}
 
-	// Backup current binary
 	backupPath := exePath + ".backup"
 	if err := os.Rename(exePath, backupPath); err != nil {
 		_ = os.Remove(tmpFile)
 		return fmt.Errorf("failed to backup current binary: %v", err)
 	}
 
-	// Move new binary to place
 	if err := os.Rename(tmpFile, exePath); err != nil {
-		// Try to restore backup
 		_ = os.Rename(backupPath, exePath)
 		return fmt.Errorf("failed to install new binary: %v", err)
 	}
 
-	// Remove backup
 	_ = os.Remove(backupPath)
+	return nil
+}
+
+func autoUpdate(currentVersion string, release *githubRelease) error {
+	latestVersion := strings.TrimPrefix(release.TagName, "v")
+	if latestVersion == currentVersion {
+		return nil
+	}
+
+	binaryName := getBinaryName()
+	downloadURL := findDownloadURL(release, binaryName)
+	if downloadURL == "" {
+		return fmt.Errorf("no binary found for %s/%s", runtime.GOOS, runtime.GOARCH)
+	}
+
+	logger.Info("Auto-update: downloading %s (v%s)", binaryName, latestVersion)
+	if err := downloadAndInstall(downloadURL, latestVersion); err != nil {
+		return err
+	}
+
+	logger.Info("Auto-update complete: v%s installed. Restart the daemon to apply.", latestVersion)
+	return nil
+}
+
+func Update(currentVersion string) error {
+	fmt.Printf("Current version: v%s\n", currentVersion)
+	fmt.Println("Checking for updates from GitHub...")
+
+	release, err := fetchLatestRelease()
+	if err != nil {
+		return err
+	}
+
+	latestVersion := strings.TrimPrefix(release.TagName, "v")
+	fmt.Printf("Latest version: v%s\n", latestVersion)
+
+	if latestVersion == currentVersion {
+		fmt.Println("✅ Already running the latest version!")
+		return nil
+	}
+
+	fmt.Printf("\n🎉 New version available: v%s\n", latestVersion)
+	fmt.Print("Download and install? [Y/n]: ")
+
+	reader := bufio.NewReader(os.Stdin)
+	answer, _ := reader.ReadString('\n')
+	answer = strings.TrimSpace(strings.ToLower(answer))
+
+	if answer != "" && answer != "y" && answer != "yes" {
+		fmt.Println("Update cancelled")
+		return nil
+	}
+
+	binaryName := getBinaryName()
+	downloadURL := findDownloadURL(release, binaryName)
+	if downloadURL == "" {
+		return fmt.Errorf("no binary found for %s/%s", runtime.GOOS, runtime.GOARCH)
+	}
+
+	fmt.Printf("\nDownloading %s...\n", binaryName)
+	if err := downloadAndInstall(downloadURL, latestVersion); err != nil {
+		return err
+	}
 
 	fmt.Printf("\n✅ Updated to v%s successfully!\n", latestVersion)
 	fmt.Println("\nIf you have the daemon running, restart it:")
@@ -802,6 +823,13 @@ func reconcileOnce(dryRun bool, version string) error {
 
 	if changedProjects != nil && len(changedProjects) == 0 {
 		logger.Info("No project changes detected in %s, skipping reconciliation", cfg.Repository.Path)
+		if !dryRun {
+			if err := state.UpdateWithProjects(newCommit, []string{}); err != nil {
+				logger.Error("Failed to update state for no-change commit: %v", err)
+				return err
+			}
+			logger.Info("State updated to new commit (no app changes)")
+		}
 		return nil
 	}
 
