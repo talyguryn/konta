@@ -35,10 +35,13 @@ Usage:
   konta install [OPTIONS]           First-time setup
   konta uninstall                   Remove Konta completely
   konta run [--dry-run] [--watch]   Execute once or in watch mode
-  konta daemon [enable|disable|status]  Manage systemd service
-  konta status                      Show last deployment info
-  konta journal                     View live logs (journalctl -f)
-  konta update                      Update to latest version from GitHub
+  konta daemon [enable|disable|restart|status]  Manage daemon service
+  konta start                       Start the daemon
+  konta stop                        Stop the daemon
+  konta restart                     Restart the daemon
+  konta status                      Show daemon status
+  konta journal                     View live logs
+  konta update [-y]                 Update to latest version from GitHub
   konta version (-v)                Show version
   konta help (-h)                   Show this help
 
@@ -53,8 +56,12 @@ Short flags:
   -h, --help                        Show this help
   -v, --version                     Show version
   -r                                Same as 'run'
-  -d                                Same as 'daemon enable'
-  -s                                Same as 'status'
+  -d                                Same as 'daemon enable' (or 'start')
+  -s                                Show daemon status
+  -j                                Show live logs (same as 'journal')
+
+Update flags:
+  -y                                Skip confirmation and auto-update
 
 Examples:
   konta install                     # Interactive setup
@@ -63,11 +70,14 @@ Examples:
   konta run                         # Single reconciliation
   konta run --watch                 # Watch mode (poll every N seconds)
   konta run --dry-run               # Show what would change
-  konta daemon enable               # Enable background service
-  konta daemon disable              # Disable background service
-  konta daemon status               # Check if running
+  konta start                       # Start the daemon
+  konta stop                        # Stop the daemon
+  konta restart                     # Restart the daemon
+  konta status                      # Check daemon status
   konta journal                     # View live logs
-  konta update                      # Update to latest version
+  konta journal -f                  # Same as 'konta journal'
+  konta update                      # Update to latest version (interactive)
+  konta update -y                   # Update without confirmation
 
 Environment:
   KONTA_TOKEN                       GitHub token (alternative to --token)
@@ -300,25 +310,13 @@ func installInteractive() error {
 
 	logger.Info("Installation complete")
 	fmt.Println("\n✅ Setup complete!")
-	fmt.Println("\nNext steps:")
-	fmt.Println("  1. Run once to test:     konta run")
-	fmt.Println("  2. Enable daemon:        sudo konta daemon enable")
-	fmt.Println("  3. Check daemon status:  systemctl status konta")
-	fmt.Println("  4. View logs:            journalctl -u konta -f")
+	fmt.Println("\nStarting daemon...")
 
-	// Ask if user wants to enable daemon now
-	fmt.Print("\nEnable daemon now? (yes/no) [yes]: ")
-	daemonReader := bufio.NewReader(os.Stdin)
-	answer, _ := daemonReader.ReadString('\n')
-	answer = strings.TrimSpace(strings.ToLower(answer))
-
-	if answer == "" || answer == "yes" || answer == "y" {
-		fmt.Println("Attempting to enable daemon...")
-		if err := daemonEnable("konta", "/etc/systemd/system/konta.service"); err != nil {
-			logger.Error("Failed to enable daemon: %v", err)
-			fmt.Printf("\n⚠️  Could not auto-enable daemon. Run as root later:\n")
-			fmt.Printf("    sudo konta daemon enable\n")
-		}
+	// Automatically enable and start daemon
+	if err := daemonEnable("konta", "/etc/systemd/system/konta.service"); err != nil {
+		logger.Warn("Failed to auto-enable daemon: %v", err)
+		fmt.Printf("\n⚠️  Could not auto-start daemon. To enable it manually, run:\n")
+		fmt.Printf("    sudo konta daemon enable\n")
 	}
 
 	return nil
@@ -649,7 +647,7 @@ func autoUpdate(currentVersion string, release *githubRelease) error {
 	return nil
 }
 
-func Update(currentVersion string) error {
+func Update(currentVersion string, forceYes bool) error {
 	fmt.Printf("Current version: v%s\n", currentVersion)
 	fmt.Println("Checking for updates from GitHub...")
 
@@ -667,15 +665,20 @@ func Update(currentVersion string) error {
 	}
 
 	fmt.Printf("\n🎉 New version available: v%s\n", latestVersion)
-	fmt.Print("Download and install? [Y/n]: ")
 
-	reader := bufio.NewReader(os.Stdin)
-	answer, _ := reader.ReadString('\n')
-	answer = strings.TrimSpace(strings.ToLower(answer))
+	if !forceYes {
+		fmt.Print("Download and install? [Y/n]: ")
 
-	if answer != "" && answer != "y" && answer != "yes" {
-		fmt.Println("Update cancelled")
-		return nil
+		reader := bufio.NewReader(os.Stdin)
+		answer, _ := reader.ReadString('\n')
+		answer = strings.TrimSpace(strings.ToLower(answer))
+
+		if answer != "" && answer != "y" && answer != "yes" {
+			fmt.Println("Update cancelled")
+			return nil
+		}
+	} else {
+		fmt.Println("Auto-confirm: -y flag set, proceeding with update...")
 	}
 
 	binaryName := getBinaryName()
@@ -691,7 +694,7 @@ func Update(currentVersion string) error {
 
 	fmt.Printf("\n✅ Updated to v%s successfully!\n", latestVersion)
 	fmt.Println("\nIf you have the daemon running, restart it:")
-	fmt.Println("  sudo systemctl restart konta")
+	fmt.Println("  sudo konta restart")
 
 	return nil
 }
@@ -915,19 +918,32 @@ func reconcileOnce(dryRun bool, version string) error {
 
 // Status shows the last deployment status
 func Status() error {
+	// Check daemon status
+	statusCmd := exec.Command("systemctl", "is-active", "konta")
+	output, err := statusCmd.Output()
+
+	status := strings.TrimSpace(string(output))
+	if err != nil || status != "active" {
+		fmt.Printf("❌ Konta daemon is not running\n")
+	} else {
+		fmt.Printf("✅ Konta daemon is running\n")
+	}
+
+	fmt.Println()
+
+	// Show last deployment info
 	currentState, err := state.Load()
 	if err != nil {
-		logger.Error("Failed to load state: %v", err)
+		logger.Debug("Failed to load state: %v", err)
 	}
 
 	if currentState.LastCommit == "" {
-		fmt.Println("No deployments yet")
-		return nil
+		fmt.Println("Last deployment: (none yet)")
+	} else {
+		fmt.Println("Last deployment:")
+		fmt.Printf("  Commit:    %s\n", currentState.LastCommit[:8])
+		fmt.Printf("  Timestamp: %s\n", currentState.LastDeployTime)
 	}
-
-	fmt.Println("Last deployment:")
-	fmt.Printf("  Commit:    %s\n", currentState.LastCommit[:8])
-	fmt.Printf("  Timestamp: %s\n", currentState.LastDeployTime)
 
 	return nil
 }
@@ -1017,8 +1033,17 @@ func ManageDaemon(action string) error {
 	case "status":
 		return daemonStatus(serviceName)
 
+	case "start":
+		return daemonStart(serviceName)
+
+	case "stop":
+		return daemonStop(serviceName)
+
+	case "restart":
+		return daemonRestart(serviceName)
+
 	default:
-		return fmt.Errorf("unknown daemon action: %s (use: enable, disable, status)", action)
+		return fmt.Errorf("unknown daemon action: %s (use: enable, disable, restart, status, start, stop)", action)
 	}
 }
 
@@ -1075,11 +1100,13 @@ WantedBy=multi-user.target
 
 	fmt.Printf("✅ Konta daemon enabled and started\n")
 	fmt.Printf("   Manage:\n")
-	fmt.Printf("     systemctl start konta   - Start service\n")
-	fmt.Printf("     systemctl stop konta    - Stop service\n")
-	fmt.Printf("     systemctl status konta  - Check status\n")
+	fmt.Printf("     konta start      - Start service\n")
+	fmt.Printf("     konta stop       - Stop service\n")
+	fmt.Printf("     konta restart    - Restart service\n")
+	fmt.Printf("     konta status     - Check status\n")
 	fmt.Printf("   Logs:\n")
-	fmt.Printf("     journalctl -u konta -f  - Live logs\n")
+	fmt.Printf("     konta journal    - View live logs\n")
+	fmt.Printf("     konta journal -f - Same as 'konta journal'\n")
 
 	return nil
 }
@@ -1144,5 +1171,53 @@ func daemonStatus(serviceName string) error {
 		fmt.Printf("⚠️  Konta daemon is %s\n", status)
 	}
 
+	return nil
+}
+
+func daemonStart(serviceName string) error {
+	// Check if we're root
+	if os.Getuid() != 0 {
+		return fmt.Errorf("root privileges required to start daemon")
+	}
+
+	// Start service
+	startCmd := exec.Command("systemctl", "start", serviceName)
+	if err := startCmd.Run(); err != nil {
+		return fmt.Errorf("failed to start service: %w", err)
+	}
+
+	fmt.Printf("✅ Konta daemon started\n")
+	return nil
+}
+
+func daemonStop(serviceName string) error {
+	// Check if we're root
+	if os.Getuid() != 0 {
+		return fmt.Errorf("root privileges required to stop daemon")
+	}
+
+	// Stop service
+	stopCmd := exec.Command("systemctl", "stop", serviceName)
+	if err := stopCmd.Run(); err != nil {
+		return fmt.Errorf("failed to stop service: %w", err)
+	}
+
+	fmt.Printf("✅ Konta daemon stopped\n")
+	return nil
+}
+
+func daemonRestart(serviceName string) error {
+	// Check if we're root
+	if os.Getuid() != 0 {
+		return fmt.Errorf("root privileges required to restart daemon")
+	}
+
+	// Restart service
+	restartCmd := exec.Command("systemctl", "restart", serviceName)
+	if err := restartCmd.Run(); err != nil {
+		return fmt.Errorf("failed to restart service: %w", err)
+	}
+
+	fmt.Printf("✅ Konta daemon restarted\n")
 	return nil
 }

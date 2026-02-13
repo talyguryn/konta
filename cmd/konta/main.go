@@ -9,7 +9,7 @@ import (
 	"github.com/talyguryn/konta/internal/logger"
 )
 
-const Version = "0.1.15"
+const Version = "0.1.16"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -46,7 +46,15 @@ func main() {
 		}
 
 	case "update":
-		if err := cmd.Update(Version); err != nil {
+		args := os.Args[2:]
+		forceYes := false
+		for _, arg := range args {
+			if arg == "-y" || arg == "--yes" {
+				forceYes = true
+				break
+			}
+		}
+		if err := cmd.Update(Version, forceYes); err != nil {
 			logger.Fatal("Update failed: %v", err)
 		}
 
@@ -74,12 +82,27 @@ func main() {
 
 	case "daemon":
 		if len(os.Args) < 3 {
-			fmt.Println("Usage: konta daemon [enable|disable|status]")
+			fmt.Println("Usage: konta daemon [enable|disable|restart|status]")
 			os.Exit(1)
 		}
 		subcmd := os.Args[2]
 		if err := cmd.ManageDaemon(subcmd); err != nil {
 			logger.Fatal("Daemon management failed: %v", err)
+		}
+
+	case "start":
+		if err := cmd.ManageDaemon("start"); err != nil {
+			logger.Fatal("Start failed: %v", err)
+		}
+
+	case "stop":
+		if err := cmd.ManageDaemon("stop"); err != nil {
+			logger.Fatal("Stop failed: %v", err)
+		}
+
+	case "restart":
+		if err := cmd.ManageDaemon("restart"); err != nil {
+			logger.Fatal("Restart failed: %v", err)
 		}
 
 	case "status", "-s":
@@ -88,6 +111,11 @@ func main() {
 		}
 
 	case "journal":
+		if err := cmd.Journal(); err != nil {
+			logger.Fatal("Journal failed: %v", err)
+		}
+
+	case "-j", "-J":
 		if err := cmd.Journal(); err != nil {
 			logger.Fatal("Journal failed: %v", err)
 		}
