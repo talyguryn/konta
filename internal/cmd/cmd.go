@@ -324,7 +324,7 @@ func validateInstallParams(repoURL, branch, appsPath string, interval int) error
 // testRepositoryConnection tests if we can connect to the repository
 func testRepositoryConnection(repoURL, branch, token string) error {
 	logger.Info("Testing connection with git...")
-	
+
 	tempDir, err := os.MkdirTemp("", "konta-test-*")
 	if err != nil {
 		return fmt.Errorf("failed to create temp directory: %w", err)
