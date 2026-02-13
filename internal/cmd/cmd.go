@@ -571,6 +571,59 @@ type githubRelease struct {
 	} `json:"assets"`
 }
 
+type githubRateLimit struct {
+	Rate struct {
+		Limit     int `json:"limit"`
+		Remaining int `json:"remaining"`
+		Reset     int64 `json:"reset"`
+	} `json:"rate"`
+}
+
+func getGitHubRateLimitReset() (int64, error) {
+	resp, err := http.Get("https://api.github.com/rate_limit")
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	var rateLimit githubRateLimit
+	if err := json.NewDecoder(resp.Body).Decode(&rateLimit); err != nil {
+		return 0, err
+	}
+
+	return rateLimit.Rate.Reset, nil
+}
+
+func formatRateLimitReset(resetTime int64) string {
+	now := time.Now().Unix()
+	diff := resetTime - now
+
+	if diff <= 0 {
+		return "now"
+	}
+
+	minutes := diff / 60
+	seconds := diff % 60
+
+	if minutes == 0 {
+		return fmt.Sprintf("in %d seconds", seconds)
+	}
+
+	if minutes < 60 {
+		if seconds == 0 {
+			return fmt.Sprintf("in %d minutes", minutes)
+		}
+		return fmt.Sprintf("in %d minutes %d seconds", minutes, seconds)
+	}
+
+	hours := minutes / 60
+	remainingMinutes := minutes % 60
+	if remainingMinutes == 0 {
+		return fmt.Sprintf("in %d hours", hours)
+	}
+	return fmt.Sprintf("in %d hours %d minutes", hours, remainingMinutes)
+}
+
 func buildGitHubErrorMessage(statusCode int, body []byte) string {
 	// Parse GitHub API error response if available
 	var apiError struct {
@@ -582,7 +635,12 @@ func buildGitHubErrorMessage(statusCode int, body []byte) string {
 		case 403:
 			// Rate limiting is the most common 403 error
 			if strings.Contains(apiError.Message, "rate limit") {
-				return fmt.Sprintf("Error while checking updates: GitHub API rate limit exceeded. Please try again in a few minutes. (%s)", apiError.Message)
+				resetTime, err := getGitHubRateLimitReset()
+				if err == nil {
+					when := formatRateLimitReset(resetTime)
+					return fmt.Sprintf("Error while checking updates: GitHub API rate limit exceeded. You can try again %s.", when)
+				}
+				return "Error while checking updates: GitHub API rate limit exceeded. Please try again later."
 			}
 			return fmt.Sprintf("Error while checking updates: Access denied by GitHub API. %s", apiError.Message)
 		case 404:
@@ -595,7 +653,12 @@ func buildGitHubErrorMessage(statusCode int, body []byte) string {
 	// Fallback messages based on status code
 	switch statusCode {
 	case 403:
-		return "Error while checking updates: GitHub API rate limit exceeded. Please try again in a few minutes."
+		resetTime, err := getGitHubRateLimitReset()
+		if err == nil {
+			when := formatRateLimitReset(resetTime)
+			return fmt.Sprintf("Error while checking updates: GitHub API rate limit exceeded. You can try again %s.", when)
+		}
+		return "Error while checking updates: GitHub API rate limit exceeded. Please try again later."
 	case 404:
 		return "Error while checking updates: Release not found on GitHub"
 	case 500, 502, 503, 504:
