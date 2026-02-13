@@ -70,7 +70,7 @@ func (r *Runner) run(hookType string) error {
 
 	cmd := exec.Command("bash", hookPath)
 	cmd.Dir = r.repoDir
-	
+
 	// Suppress output for post_update hook, show output for other hooks
 	if hookType == "post_update" {
 		cmd.Stdout = nil

@@ -762,16 +762,6 @@ func downloadAndInstall(downloadURL string, latestVersion string) error {
 }
 
 func runPostUpdateHook() {
-	cfg, err := config.Load()
-	if err != nil {
-		return
-	}
-
-	repoDir := state.GetCurrentLink()
-	if _, err := os.Stat(repoDir); err != nil {
-		return
-	}
-
 	// Suppress all output (logs and hook output) during post-update
 	devNull, err := os.Open(os.DevNull)
 	if err != nil {
@@ -783,6 +773,20 @@ func runPostUpdateHook() {
 	oldStderr := os.Stderr
 	os.Stdout = devNull
 	os.Stderr = devNull
+
+	cfg, err := config.Load()
+	if err != nil {
+		os.Stdout = oldStdout
+		os.Stderr = oldStderr
+		return
+	}
+
+	repoDir := state.GetCurrentLink()
+	if _, err := os.Stat(repoDir); err != nil {
+		os.Stdout = oldStdout
+		os.Stderr = oldStderr
+		return
+	}
 
 	hookRunner := hooks.New(repoDir, cfg.Hooks.PreAbs, cfg.Hooks.SuccessAbs, cfg.Hooks.FailureAbs, cfg.Hooks.PostUpdateAbs)
 	_ = hookRunner.RunPostUpdate()
@@ -845,8 +849,6 @@ func Update(currentVersion string, forceYes bool) error {
 			fmt.Println("Update cancelled")
 			return nil
 		}
-	} else {
-		fmt.Println("Auto-confirm: -y flag set, proceeding with update...")
 	}
 
 	binaryName := getBinaryName()

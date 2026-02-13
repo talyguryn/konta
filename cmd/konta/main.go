@@ -9,7 +9,7 @@ import (
 	"github.com/talyguryn/konta/internal/logger"
 )
 
-const Version = "0.1.30"
+const Version = "0.1.31"
 
 func main() {
 	if len(os.Args) < 2 {
