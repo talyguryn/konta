@@ -51,15 +51,13 @@ detect_arch() {
     esac
 }
 
-# Get the latest release version
+# Get the latest release version (stdout only, no status messages)
 get_latest_version() {
-    print_info "Fetching latest version..."
-
     version=$(curl -s "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name"' | head -1 | cut -d'"' -f4 2>/dev/null)
 
     if [ -z "$version" ]; then
-        print_error "Could not fetch latest version"
-        exit 1
+        echo "" # Return empty on error, main() will handle
+        return 1
     fi
 
     # Remove 'v' prefix if present
@@ -84,7 +82,12 @@ main() {
     print_success "Detected: $(uname -s) $(uname -m) ($OS/$ARCH)"
 
     # Get latest version
+    print_info "Fetching latest version..."
     VERSION=$(get_latest_version)
+    if [ -z "$VERSION" ]; then
+        print_error "Could not fetch latest version from GitHub"
+        exit 1
+    fi
     print_success "Latest version: v${VERSION}"
 
     # Determine binary name
