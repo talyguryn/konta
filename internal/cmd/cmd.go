@@ -41,7 +41,7 @@ Usage:
   konta restart                     Restart the daemon
   konta status                      Show daemon status
   konta journal                     View live logs
-	konta config                      Print current config file
+	konta config [-e]                 Print or edit current config file
   konta update [-y]                 Update to latest version from GitHub
   konta version (-v)                Show version
   konta help (-h)                   Show this help
@@ -87,11 +87,19 @@ More info: https://github.com/talyguryn/konta
 `, version)
 }
 
-// Config prints the contents of the active config file.
-func Config() error {
+// Config prints the contents of the active config file or opens it in an editor.
+func Config(edit bool) error {
 	configPath, err := config.FindConfigPath()
 	if err != nil {
 		return err
+	}
+
+	if edit {
+		cmd := exec.Command("nano", configPath)
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		return cmd.Run()
 	}
 
 	data, err := os.ReadFile(configPath)
@@ -652,6 +660,25 @@ func downloadAndInstall(downloadURL string, latestVersion string) error {
 	return nil
 }
 
+func runPostUpdateHook() {
+	cfg, err := config.Load()
+	if err != nil {
+		logger.Warn("Post-update hook skipped: %v", err)
+		return
+	}
+
+	repoDir := state.GetCurrentLink()
+	if _, err := os.Stat(repoDir); err != nil {
+		logger.Warn("Post-update hook skipped: current release not found at %s", repoDir)
+		return
+	}
+
+	hookRunner := hooks.New(repoDir, cfg.Hooks.PreAbs, cfg.Hooks.SuccessAbs, cfg.Hooks.FailureAbs, cfg.Hooks.PostUpdateAbs)
+	if err := hookRunner.RunPostUpdate(); err != nil {
+		logger.Warn("Post-update hook failed: %v", err)
+	}
+}
+
 func autoUpdate(currentVersion string, release *githubRelease) error {
 	latestVersion := strings.TrimPrefix(release.TagName, "v")
 	if latestVersion == currentVersion {
@@ -668,6 +695,8 @@ func autoUpdate(currentVersion string, release *githubRelease) error {
 	if err := downloadAndInstall(downloadURL, latestVersion); err != nil {
 		return err
 	}
+
+	runPostUpdateHook()
 
 	logger.Info("Auto-update complete: v%s installed. Restart the daemon to apply.", latestVersion)
 	return nil
@@ -720,20 +749,7 @@ func Update(currentVersion string, forceYes bool) error {
 
 	fmt.Printf("\n✅ Updated to v%s successfully!\n", latestVersion)
 
-	// Load config to get hook paths for post_update hook
-	cfg, err := config.Load()
-	if err == nil {
-		// Create hook runner and execute post_update hook
-		repoDir := filepath.Dir(cfg.Repository.Path)
-		if repoDir == "." {
-			repoDir, _ = os.Getwd()
-		}
-		hookRunner := hooks.New(repoDir, cfg.Hooks.PreAbs, cfg.Hooks.SuccessAbs, cfg.Hooks.FailureAbs, cfg.Hooks.PostUpdateAbs)
-		if err := hookRunner.RunPostUpdate(); err != nil {
-			logger.Warn("Post-update hook failed: %v", err)
-			// Don't fail the update if hook fails, just warn
-		}
-	}
+	runPostUpdateHook()
 
 	// Check if daemon is running and restart it
 	statusCmd := exec.Command("systemctl", "is-active", "konta")
@@ -781,6 +797,11 @@ func Run(dryRun bool, watch bool, version string) error {
 		}
 
 		logger.Info("Watch mode enabled. Polling every %d seconds (Ctrl+C to stop)", cfg.Repository.Interval)
+
+		// Check for updates on first run
+		if cfg.KontaUpdates != "" && cfg.KontaUpdates != "false" {
+			_ = CheckForUpdates(version, cfg.KontaUpdates)
+		}
 
 		// First reconciliation already done above, now enter polling loop
 		var ticker *time.Ticker

@@ -9,7 +9,7 @@ import (
 	"github.com/talyguryn/konta/internal/logger"
 )
 
-const Version = "0.1.21"
+const Version = "0.1.22"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -116,7 +116,14 @@ func main() {
 		}
 
 	case "config":
-		if err := cmd.Config(); err != nil {
+		edit := false
+		for _, arg := range os.Args[2:] {
+			if arg == "-e" || arg == "--edit" {
+				edit = true
+				break
+			}
+		}
+		if err := cmd.Config(edit); err != nil {
 			logger.Fatal("Config failed: %v", err)
 		}
 
