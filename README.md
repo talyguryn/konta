@@ -59,10 +59,17 @@ Konta is a simple tool that:
 
 ### 1. Download & Install
 
+**Recommended: One-line curl installer (like Homebrew):**
 ```bash
-wget https://github.com/talyguryn/konta/releases/latest/download/konta-linux
-chmod +x konta-linux
-sudo mv konta-linux /usr/local/bin/konta
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/talyguryn/konta/main/scripts/install.sh)"
+```
+
+**Or download manually and install to /usr/local/bin:**
+```bash
+curl -fsSL https://github.com/talyguryn/konta/releases/download/v0.1.6/konta-linux -o /usr/local/bin/konta
+chmod +x /usr/local/bin/konta
+# For macOS (Apple Silicon):
+# curl -fsSL https://github.com/talyguryn/konta/releases/download/v0.1.6/konta-darwin-arm64 -o /usr/local/bin/konta
 ```
 
 ### 2. Setup with One Command
@@ -78,7 +85,8 @@ sudo konta install \
   --repo https://github.com/yourname/infrastructure \
   --branch main \
   --path vps0/apps \
-  --interval 120
+  --interval 120 \
+  --konta_updates notify
 ```
 
 Using KONTA_TOKEN for private repos:
@@ -99,21 +107,57 @@ sudo konta install \
   --repo https://github.com/talyguryn/konta \
   --path spb/apps \
   --branch main \
-  --interval 120
+  --interval 120 \
+  --konta_updates notify
 
 # Start the daemon
 sudo konta daemon enable
 
 # Konta will now:
-# 1. Check for changes every 2 minutes
+# 1. Check for changes every configured interval
 # 2. Only restart containers that changed
 # 3. Skip unchanged apps (beszel-agent, nginx, etc.)
 # 4. Manage pre/success hooks from spb/hooks/
+# 5. Check for Konta updates (notify mode: log only, no auto-install)
 ```
 
 This demonstrates real use: each git push to the infrastructure repository triggers only the affected services to update!
 
-### 4. Repository Structure
+### 4. Configuration
+
+Configuration is auto-generated at `/etc/konta/config.yaml`:
+- ✅ Auto-configure hooks paths (looks in `{path}/hooks/`)
+- ✅ Create config.lock with full backup for recovery
+- ✅ Log the Konta version before each run
+- ✅ Support dynamic interval updates (edit config and save)
+- ✅ Detect config changes by comparing with lock file
+
+**Configuration Example:**
+```yaml
+version: v1
+repository:
+  url: https://github.com/yourname/infrastructure
+  branch: main
+  path: apps
+  interval: 120
+  token: gh_xxxx  # Optional, or use KONTA_TOKEN env var
+konta_updates: notify  # auto|notify|false - manage update checks
+hooks:
+  pre: spb/hooks/pre.sh           # Optional
+  success: spb/hooks/success.sh   # Optional  
+  failure: spb/hooks/failure.sh   # Optional
+deploy:
+  atomic: true
+logging:
+  level: info  # debug|info|warn|error
+```
+
+**Update Behavior:**
+- `auto` — Check for updates and auto-install (safe minor versions only)
+- `notify` — Log when updates available, user decides when to update (default)
+- `false` — Disable update checks entirely
+
+### 5. Repository Structure
 
 ```
 infrastructure/
@@ -126,19 +170,11 @@ infrastructure/
 │       └── success.sh
 ```
 
-### 5. Edit Configuration Later
-
-Configuration is auto-generated at `/etc/konta/config.yaml`. The installer will:
-- ✅ Auto-configure hooks paths (will look in `{path}/hooks/`)
-- ✅ Create config.lock for validation
-- ✅ Log the Konta version before loading config
-- ✅ Support dynamic interval updates (just edit config and save)
-
-### 4. Deploy!
+### 6. Deploy!
 
 ```bash
 git push
-# Within 2 minutes, Konta automatically deploys!
+# Within your configured interval, Konta automatically deploys!
 ```
 
 ## Documentation

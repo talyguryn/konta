@@ -1,7 +1,6 @@
 package config
 
 import (
-	"crypto/md5"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -113,17 +112,14 @@ func Load() (*types.Config, error) {
 	return config, nil
 }
 
-// validateAndLockConfig validates the config and creates a lock file to prevent loading bad configs
+// validateAndLockConfig validates the config and creates a lock file with full config backup
 func validateAndLockConfig(config *types.Config, configPath string) error {
 	lockPath := configPath + ".lock"
 
-	// Create lock file with current config hash
-	data, _ := yaml.Marshal(config)
-	configHash := fmt.Sprintf("%x", md5.Sum([]byte(data)))
-
+	// Create lock file with full config for recovery and change detection
 	lockData := map[string]interface{}{
-		"config_hash": configHash,
-		"timestamp":   time.Now().Format("2006-01-02 15:04:05"),
+		"timestamp": time.Now().Format("2006-01-02 15:04:05"),
+		"config":    config,
 	}
 
 	lockBytes, _ := yaml.Marshal(lockData)
@@ -133,6 +129,39 @@ func validateAndLockConfig(config *types.Config, configPath string) error {
 	}
 
 	return nil
+}
+
+// HasConfigChanged checks if the current config differs from the locked version
+func HasConfigChanged(config *types.Config, configPath string) bool {
+	lockPath := configPath + ".lock"
+
+	// Read lock file
+	lockData, err := os.ReadFile(lockPath)
+	if err != nil {
+		// Lock file doesn't exist, consider it changed
+		return true
+	}
+
+	var lock map[string]interface{}
+	if err := yaml.Unmarshal(lockData, &lock); err != nil {
+		logger.Debug("Failed to parse lock file: %v", err)
+		return true
+	}
+
+	// Extract config from lock file and compare
+	if lockedCfgInterface, ok := lock["config"]; ok {
+		// Re-marshal both configs to compare their YAML representation
+		currentData, _ := yaml.Marshal(config)
+		lockedData, _ := yaml.Marshal(lockedCfgInterface)
+
+		hasChanged := string(currentData) != string(lockedData)
+		if hasChanged {
+			logger.Info("Config file has been modified since last load")
+		}
+		return hasChanged
+	}
+
+	return true
 }
 
 // Save saves the configuration to the default location
