@@ -87,6 +87,32 @@ func (r *Reconciler) Reconcile() ([]string, error) {
 		reconciledProjects = append(reconciledProjects, project)
 	}
 
+	// Ensure all desired projects have their containers running
+	// This handles cases where containers were stopped but config didn't change
+	for _, project := range desired {
+		// Skip if we already reconciled this project
+		if contains(reconciledProjects, project) {
+			continue
+		}
+
+		// Check if any containers are stopped for this project
+		hasStoppedContainers, err := r.hasStoppedContainers(project)
+		if err != nil {
+			logger.Warn("Failed to check containers for project %s: %v", project, err)
+			continue
+		}
+
+		if hasStoppedContainers {
+			logger.Info("Project %s has stopped containers, starting them", project)
+			if err := r.startProject(project); err != nil {
+				logger.Warn("Failed to start project %s: %v", project, err)
+				// Don't return error, just warn - let other projects continue
+			} else {
+				reconciledProjects = append(reconciledProjects, project)
+			}
+		}
+	}
+
 	// Remove orphan projects (only Konta-managed ones)
 	// Since getRunningProjects() already filters by konta.managed=true,
 	// we're only removing containers that Konta created but are no longer in Git
@@ -288,6 +314,65 @@ func (r *Reconciler) downProject(project string) error {
 		return fmt.Errorf("docker compose down failed: %w", err)
 	}
 
+	return nil
+}
+
+// hasStoppedContainers checks if a project has any stopped containers
+func (r *Reconciler) hasStoppedContainers(project string) (bool, error) {
+	composePath := filepath.Join(r.appsDir, project, "docker-compose.yml")
+
+	// Check if compose file defines any services
+	if _, err := os.Stat(composePath); err != nil {
+		return false, err
+	}
+
+	// Check for stopped containers with konta.managed label
+	cmd := exec.Command(
+		"docker", "ps",
+		"-a",
+		"--filter", fmt.Sprintf("label=com.docker.compose.project=%s", project),
+		"--filter", "label=konta.managed=true",
+		"--filter", "status=exited",
+		"--format", "{{.ID}}",
+	)
+
+	output, err := cmd.Output()
+	if err != nil {
+		// If command fails, assume no stopped containers
+		return false, nil
+	}
+
+	return len(strings.TrimSpace(string(output))) > 0, nil
+}
+
+// startProject starts all containers for a project
+func (r *Reconciler) startProject(project string) error {
+	composePath := filepath.Join(r.appsDir, project, "docker-compose.yml")
+
+	if r.dryRun {
+		logger.Info("[DRY-RUN] Would start containers for project %s", project)
+		return nil
+	}
+
+	cmd := exec.Command(
+		"docker", "compose",
+		"-p", project,
+		"-f", composePath,
+		"up", "-d",
+		"--remove-orphans",
+	)
+
+	cmd.Dir = filepath.Join(r.appsDir, project)
+	cmd.Stdout = os.Stderr
+	cmd.Stderr = os.Stderr
+	// Ensure konta management label is set
+	cmd.Env = append(os.Environ(), "COMPOSE_PROJECT_LABELS=konta.managed=true")
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to start project %s: %w", project, err)
+	}
+
+	logger.Info("Project %s started successfully", project)
 	return nil
 }
 
