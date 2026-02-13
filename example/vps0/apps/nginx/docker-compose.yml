@@ -11,8 +11,8 @@ services:
       - ./html:/usr/share/nginx/html:ro
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
 
-    ports:
-      - "8080:80"
+    # ports:
+    #   - "80:80"
 
     deploy:
       mode: replicated
