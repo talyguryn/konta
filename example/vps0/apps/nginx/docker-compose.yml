@@ -1,8 +1,9 @@
 services:
   nginx:
     labels:
-      - konta.managed=true
-      
+      # Mark this container as managed by Konta
+      konta.managed: "true"
+
     image: nginx:latest
     restart: unless-stopped
 
