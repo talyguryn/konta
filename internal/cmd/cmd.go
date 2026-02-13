@@ -831,7 +831,7 @@ func Update(currentVersion string, forceYes bool) error {
 	latestVersion := strings.TrimPrefix(release.TagName, "v")
 
 	if latestVersion == currentVersion {
-		fmt.Println("✅ Already running the latest version!")
+		fmt.Println("\n✅ Already running the latest version!")
 		return nil
 	}
 
@@ -1307,14 +1307,13 @@ WantedBy=multi-user.target
 	}
 
 	fmt.Printf("✅ Konta daemon enabled and started\n")
-	fmt.Printf("   Manage:\n")
-	fmt.Printf("     konta enable     - Enable and start service\n")
-	fmt.Printf("     konta disable    - Stop and disable service\n")
-	fmt.Printf("     konta restart    - Restart service\n")
-	fmt.Printf("     konta status     - Check status\n")
-	fmt.Printf("   Logs:\n")
-	fmt.Printf("     konta journal    - View live logs\n")
-	fmt.Printf("     konta journal -f - Same as 'konta journal'\n")
+	// fmt.Printf("   Manage:\n")
+	// fmt.Printf("     konta enable     - Enable and start service\n")
+	// fmt.Printf("     konta disable    - Stop and disable service\n")
+	// fmt.Printf("     konta restart    - Restart service\n")
+	// fmt.Printf("     konta status     - Check status\n")
+	// fmt.Printf("   Logs:\n")
+	// fmt.Printf("     konta journal    - View live logs\n")
 
 	return nil
 }
