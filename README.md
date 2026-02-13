@@ -14,6 +14,8 @@ If you're like me, you want a simple way to manage your server infrastructure us
 
 So I built Konta — a tiny, single binary tool that watches a Git repository and automatically deploys Docker Compose stacks on your server. It handles atomic updates, orphan cleanup, and hooks for pre/post deploy scripts. It's perfect for anyone who wants GitOps for their single-node Docker infrastructure without the complexity of Kubernetes.
 
+Kónta is short for container, stylized with K letter.
+
 ## What is Konta?
 
 Konta is a simple tool that:
