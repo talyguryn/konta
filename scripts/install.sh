@@ -51,6 +51,23 @@ detect_arch() {
     esac
 }
 
+# Check if Docker and Docker Compose are installed
+check_docker() {
+    if command -v docker >/dev/null 2>&1; then
+        # Docker Compose v2 is 'docker compose'
+        if docker compose version >/dev/null 2>&1; then
+            return 0
+        fi
+    fi
+
+    # Docker Compose v1 binary
+    if command -v docker-compose >/dev/null 2>&1; then
+        return 0
+    fi
+
+    return 1
+}
+
 # Get the latest release version (stdout only, no status messages)
 get_latest_version() {
     version=$(curl -s "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name"' | head -1 | cut -d'"' -f4 2>/dev/null)
@@ -89,6 +106,32 @@ main() {
         exit 1
     fi
     print_success "Latest version: v${VERSION}"
+
+    # Check Docker and Docker Compose
+    if ! check_docker; then
+        print_warning "Docker and/or Docker Compose not found."
+        echo "Install Docker автоматически? (yes/no) [yes]: " >&2
+        read -r install_docker
+        install_docker=$(echo "$install_docker" | tr '[:upper:]' '[:lower:]')
+
+        if [ -z "$install_docker" ] || [ "$install_docker" = "yes" ] || [ "$install_docker" = "y" ]; then
+            print_info "Installing Docker..."
+            if ! curl -fsSL get.docker.com | sudo bash; then
+                print_error "Failed to install Docker automatically"
+                exit 1
+            fi
+
+            # Re-check after install
+            if ! check_docker; then
+                print_error "Docker installation did not complete correctly"
+                exit 1
+            fi
+            print_success "Docker installed successfully"
+        else
+            print_error "Docker is required. Installation cancelled."
+            exit 1
+        fi
+    fi
 
     # Determine binary name
     if [ "$OS" = "linux" ]; then
