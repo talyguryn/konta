@@ -62,14 +62,6 @@ func (r *Reconciler) Reconcile() ([]string, error) {
 
 	logger.Info("Found %d desired projects", len(desired))
 
-	// Get currently running projects
-	running, err := r.getRunningProjects()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get running projects: %w", err)
-	}
-
-	logger.Info("Found %d running projects", len(running))
-
 	// Track which projects were reconciled
 	reconciledProjects := []string{}
 
@@ -113,18 +105,23 @@ func (r *Reconciler) Reconcile() ([]string, error) {
 		}
 	}
 
-	// Remove orphan projects (only Konta-managed ones)
-	// Since getRunningProjects() already filters by konta.managed=true,
-	// we're only removing containers that Konta created but are no longer in Git
-	for _, project := range running {
-		if !contains(desired, project) {
-			logger.Info("Removing orphan Konta-managed project: %s", project)
-			if !r.dryRun {
-				if err := r.downProject(project); err != nil {
-					logger.Error("Failed to remove project %s: %v", project, err)
+	// Remove orphan projects (both konta.managed and non-labeled ones)
+	// Get all Docker Compose projects regardless of labels to catch orphans
+	// that may have been created before konta managed label was added
+	allProjects, err := r.getAllComposeManagedProjects()
+	if err != nil {
+		logger.Warn("Failed to get all compose projects for orphan cleanup: %v", err)
+	} else {
+		for _, project := range allProjects {
+			if !contains(desired, project) {
+				logger.Info("Removing orphan Docker Compose project: %s", project)
+				if !r.dryRun {
+					if err := r.downProject(project); err != nil {
+						logger.Error("Failed to remove project %s: %v", project, err)
+					}
+				} else {
+					logger.Info("[DRY-RUN] Would remove project: %s", project)
 				}
-			} else {
-				logger.Info("[DRY-RUN] Would remove project: %s", project)
 			}
 		}
 	}
@@ -167,15 +164,16 @@ func (r *Reconciler) HealthCheck() ([]string, error) {
 		}
 	}
 
-	// Remove orphan projects (only Konta-managed ones)
+	// Remove orphan projects (both konta.managed and non-labeled ones)
 	// This ensures orphans are cleaned up even when no code changes are detected
-	running, err := r.getRunningProjects()
+	// and even for projects created before konta managed label was added
+	allProjects, err := r.getAllComposeManagedProjects()
 	if err != nil {
-		logger.Warn("Failed to get running projects: %v", err)
+		logger.Warn("Failed to get all compose projects: %v", err)
 	} else {
-		for _, project := range running {
+		for _, project := range allProjects {
 			if !contains(desired, project) {
-				logger.Info("Removing orphan Konta-managed project: %s", project)
+				logger.Info("Removing orphan Docker Compose project: %s", project)
 				if !r.dryRun {
 					if err := r.downProject(project); err != nil {
 						logger.Error("Failed to remove project %s: %v", project, err)
@@ -191,7 +189,7 @@ func (r *Reconciler) HealthCheck() ([]string, error) {
 	return startedProjects, nil
 }
 
-// CleanupOrphans removes Konta-managed containers that are no longer in the apps configuration
+// CleanupOrphans removes Docker Compose containers that are no longer in the apps configuration
 // This is useful when there are repository changes but no changes in the apps directory
 func (r *Reconciler) CleanupOrphans() error {
 	logger.Info("Starting orphan cleanup")
@@ -202,16 +200,17 @@ func (r *Reconciler) CleanupOrphans() error {
 		return fmt.Errorf("failed to get desired projects: %w", err)
 	}
 
-	// Get currently running projects
-	running, err := r.getRunningProjects()
+	// Get all Docker Compose projects, both Konta-managed and others
+	// This handles cases where containers were created before konta.managed label was added
+	allProjects, err := r.getAllComposeManagedProjects()
 	if err != nil {
-		return fmt.Errorf("failed to get running projects: %w", err)
+		return fmt.Errorf("failed to get compose projects: %w", err)
 	}
 
 	// Remove orphan projects
-	for _, project := range running {
+	for _, project := range allProjects {
 		if !contains(desired, project) {
-			logger.Info("Removing orphan Konta-managed project: %s", project)
+			logger.Info("Removing orphan Docker Compose project: %s", project)
 			if !r.dryRun {
 				if err := r.downProject(project); err != nil {
 					logger.Error("Failed to remove project %s: %v", project, err)
@@ -267,6 +266,34 @@ func (r *Reconciler) getRunningProjects() ([]string, error) {
 
 	sort.Strings(projects)
 	return projects, nil
+}
+
+// getAllComposeManagedProjects returns all Docker Compose projects (by com.docker.compose.project label)
+// regardless of konta.managed label. This is needed to clean up orphan projects that may have
+// been created before konta added the label or were created manually.
+func (r *Reconciler) getAllComposeManagedProjects() ([]string, error) {
+	// Get all containers with docker-compose project label, regardless of konta.managed
+	cmd := exec.Command("docker", "ps", "-a", "--filter", "label=com.docker.compose.project", "--format", "{{.Label \"com.docker.compose.project\"}}")
+	output, err := cmd.Output()
+	if err != nil {
+		logger.Warn("Failed to get all compose projects: %v", err)
+		return []string{}, nil
+	}
+
+	projects := map[string]bool{} // Use map to deduplicate
+	for _, line := range strings.Split(string(output), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			projects[line] = true
+		}
+	}
+
+	result := []string{}
+	for p := range projects {
+		result = append(result, p)
+	}
+	sort.Strings(result)
+	return result, nil
 }
 
 func (r *Reconciler) reconcileProject(project string) error {
