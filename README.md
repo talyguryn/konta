@@ -6,7 +6,19 @@ A lightweight, idempotent deployment system for single-node servers.
 
 Keep your infrastructure in Git. Deploy automatically. Stay simple.
 
-**Perfect for:** Single VPS, Docker Compose stacks, self-hosted projects.
+**✨ Perfect for:** Single VPS, Docker Compose stacks, self-hosted projects.
+
+1. **Stores your infrastructure in Git** (like Flux for Kubernetes, but simpler)
+2. **Periodically checks for changes** (polling every 2 minutes by default)
+3. **Automatically deploys new versions** (idempotent Docker Compose updates)
+4. **Cleans up old containers** (orphan cleanup)
+5. **Ensures atomic updates** (safe even if interrupted)
+
+Download and use it now:
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/talyguryn/konta/main/scripts/install.sh)"
+```
 
 ## Why
 
@@ -15,16 +27,6 @@ If you're like me, you want a simple way to manage your server infrastructure us
 So I built Konta — a tiny, single binary tool that watches a Git repository and automatically deploys Docker Compose stacks on your server. It handles atomic updates, orphan cleanup, and hooks for pre/post deploy scripts. It's perfect for anyone who wants GitOps for their single-node Docker infrastructure without the complexity of Kubernetes.
 
 Kónta is short for container, stylized with K letter.
-
-## What is Konta?
-
-Konta is a simple tool that:
-
-1. **Stores your infrastructure in Git** (like Flux for Kubernetes, but simpler)
-2. **Periodically checks for changes** (polling every 2 minutes by default)
-3. **Automatically deploys new versions** (idempotent Docker Compose updates)
-4. **Cleans up old containers** (orphan cleanup)
-5. **Ensures atomic updates** (safe even if interrupted)
 
 ## Key Features
 
@@ -37,16 +39,16 @@ Konta is a simple tool that:
 - ✅ **Hooks** — Pre/post deploy scripts
 - ✅ **Idempotent** — Safe to run repeatedly
 
-## When to Use Konta?
+<!-- ## When to Use Konta?
 
 | Use Konta if | Don't use Konta if |
 |---|---|
-| ✅ Single VPS/server | ❌ Need multi-node clustering |
+| ✅ Single VPS | ❌ Need multi-node clustering |
 | ✅ Using Docker Compose | ❌ Need 99.9% uptime SLA |
 | ✅ Want Git as source of truth | ❌ Need RBAC/authorization |
-| ✅ Simple, reliable deployments | ❌ Need complex orchestration |
+| ✅ Simple, reliable deployments | ❌ Need complex orchestration | -->
 
-## Comparison
+<!-- ## Comparison
 
 | Feature | Konta | Kubernetes | Shell Scripts |
 |---|---|---|---|
@@ -55,18 +57,72 @@ Konta is a simple tool that:
 | Learning curve | Easy | Steep | Easy |
 | Docker Compose | ✅ | ❌ | ✅ |
 | Single node | ✅ | ⚠️ | ✅ |
-| Resource usage | 12MB | 1GB+ | 1MB |
+| Resource usage | 12MB | 1GB+ | 1MB | -->
 
-## Quick Start (5 minutes)
+## Quick Start
 
-### 1. Download & Install
+### Prepare your Git repo for infrastructure
 
-**Recommended: One-line curl installer (like Homebrew):**
+Here is an example structure for your infrastructure repository.
+
+We describe server structure via two directories:
+- `apps` directory contains sub-folders for each of your applications, each with its own `docker-compose.yml` file. This allows you to manage multiple services in a modular way.
+- `hooks` (optional) directory contains scripts that will be executed at different stages of the deployment process (e.g., pre-deploy, post-deploy, on failure). This allows you to perform custom actions like notifications, backups, or health checks.
+
+The path to root of the apps and hooks (server structure) will be used in the `--path` parameter during installation. Konta will look for docker-compose files in the `apps` directory and for hook scripts in the `hooks` directory (optional).
+
+Simple single server structure repo:
+
+```
+apps/
+├── web/
+│   └── docker-compose.yml
+└── api/
+    ├── .env
+    └── docker-compose.yml
+hooks/
+├── pre.sh
+└── success.sh
+```
+
+Multi-server structure repo (recommended for multiple servers, but not required). Each server has its own directory with apps and hooks. This allows you to manage multiple servers from the same repository, while keeping their configurations organized and separate.
+
+```
+vps0/
+├── apps/
+│   ├── web/
+│   │   └── docker-compose.yml
+│   └── api/
+│       ├── .env
+│       └── docker-compose.yml
+└── hooks/
+    ├── pre.sh
+    └── success.sh
+vps-production/
+├── apps/
+│   ├── landing/
+│   │   ├── html
+│   │   │   └── index.html
+│   │   └── docker-compose.yml
+│   └── ...
+└── hooks/
+    ├── pre.sh
+    ├── failure.sh
+    └── success.sh
+```
+
+### Download Konta
+
+**Recommended: One-line curl installer:**
+
+Install the latest version of Konta with a single command. This script detects your OS and architecture, downloads the appropriate binary, and sets it up for you. Also it checks if Docker is installed and running, and prompts you to fix it if not.
+
 ```bash
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/talyguryn/konta/main/scripts/install.sh)"
 ```
 
-**Or download manually:**
+**Or download binary manually:**
+
 ```bash
 # Linux (AMD64)
 curl -fsSL https://github.com/talyguryn/konta/releases/latest/download/konta-linux -o /usr/local/bin/konta
@@ -80,7 +136,9 @@ curl -fsSL https://github.com/talyguryn/konta/releases/latest/download/konta-lin
 chmod +x /usr/local/bin/konta
 ```
 
-### 2. Setup with One Command
+Binaries are available on the [releases page](https://github.com/talyguryn/konta/releases/latest).
+
+### Installation process
 
 **Interactive mode (default):**
 ```bash
@@ -101,11 +159,10 @@ Using KONTA_TOKEN for private repos:
 ```bash
 export KONTA_TOKEN=gh_your_github_token
 sudo konta install \
-  --repo https://github.com/yourname/infrastructure \
-  --path apps
+  --repo https://github.com/yourname/infrastructure
 ```
 
-### 3. Example: Manage Konta Itself
+<!-- ### 3. Example: Manage Konta Itself
 
 Here's a cool example - use Konta to manage Konta!
 
@@ -129,72 +186,47 @@ sudo konta daemon enable
 # 5. Check for Konta updates (notify mode: log only, no auto-install)
 ```
 
-This demonstrates real use: each git push to the infrastructure repository triggers only the affected services to update!
+This demonstrates real use: each git push to the infrastructure repository triggers only the affected services to update! -->
 
-### 4. Configuration
+## Configuration file
 
-Configuration is auto-generated at `/etc/konta/config.yaml`:
+Configuration is auto-generated at `/etc/konta/config.yaml`.
+
 - ✅ Auto-configure hooks paths (looks in `{path}/hooks/` for just filenames)
-- ✅ Create config.lock with full backup for recovery
-- ✅ Log the Konta version before each run
-- ✅ Support dynamic interval updates (edit config and save)
 - ✅ Detect config changes by comparing with lock file
+- ✅ Support dynamic interval updates (edit config and save)
 
-**Configuration Example:**
+**Example:**
+
 ```yaml
 version: v1
+
 repository:
   url: https://github.com/yourname/infrastructure
   branch: main
   path: spb              # Base path (omit or use . for repo root)
   interval: 120
   token: gh_xxxx         # Optional, or use KONTA_TOKEN env var
+
 konta_updates: notify    # auto|notify|false - manage update checks
+
 hooks:
   pre: pre.sh            # Optional, found in {path}/hooks/
   success: success.sh    # Optional, found in {path}/hooks/
   failure: failure.sh    # Optional, found in {path}/hooks/
   post_update: post_update.sh  # Optional, after Konta binary update
+
 deploy:
   atomic: true
+
 logging:
   level: info  # debug|info|warn|error
 ```
 
 **Update Behavior:**
 - `auto` — Check for updates and auto-install (safe minor versions only)
-- `notify` — Log when updates available, user decides when to update (default)
-- `false` — Disable update checks entirely
-
-### 5. Repository Structure
-
-```
-infrastructure/
-├── vps0/                   # Your server
-│   ├── apps/
-│   │   ├── web/docker-compose.yml
-│   │   └── api/docker-compose.yml
-│   └── hooks/
-│       ├── pre.sh
-│       └── success.sh
-```
-
-### 6. Deploy!
-
-```bash
-git push
-# Within your configured interval, Konta automatically deploys!
-```
-
-## Documentation
-
-- **[USER_GUIDE.md](docs/USER_GUIDE.md)** — Complete reference (installation, features, troubleshooting, multi-server)
-- **[HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md)** — Architecture and implementation
-- **[CONTRIBUTING.md](docs/CONTRIBUTING.md)** — Development setup and contributing
-
-## Example Repository
-
-See [examples/vps0/](examples/vps0/) for a complete, working example with Traefik, Nginx, and Whoami.
+- `notify` (default) — Log when updates available, user decides when to update
+- `false` or omit — Disable update checks entirely
 
 ## License
 
