@@ -1036,7 +1036,18 @@ func reconcileOnce(dryRun bool, version string) error {
 	}
 
 	if changedProjects != nil && len(changedProjects) == 0 {
-		logger.Info("No project changes detected in %s, skipping reconciliation", cfg.Repository.Path)
+		logger.Info("No project changes detected in %s, but cleaning up orphans", cfg.Repository.Path)
+		
+		// Even with no project changes, we should clean up orphan containers
+		// that may have been moved out of the apps directory
+		if !dryRun {
+			reconciler := reconcile.New(cfg, releaseDir, dryRun)
+			if err := reconciler.CleanupOrphans(); err != nil {
+				logger.Warn("Failed to cleanup orphans: %v", err)
+				// Don't fail on orphan cleanup, just warn
+			}
+		}
+		
 		if !dryRun {
 			if err := state.UpdateWithProjects(newCommit, []string{}); err != nil {
 				logger.Error("Failed to update state for no-change commit: %v", err)

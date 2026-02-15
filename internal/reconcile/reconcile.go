@@ -167,8 +167,63 @@ func (r *Reconciler) HealthCheck() ([]string, error) {
 		}
 	}
 
+	// Remove orphan projects (only Konta-managed ones)
+	// This ensures orphans are cleaned up even when no code changes are detected
+	running, err := r.getRunningProjects()
+	if err != nil {
+		logger.Warn("Failed to get running projects: %v", err)
+	} else {
+		for _, project := range running {
+			if !contains(desired, project) {
+				logger.Info("Removing orphan Konta-managed project: %s", project)
+				if !r.dryRun {
+					if err := r.downProject(project); err != nil {
+						logger.Error("Failed to remove project %s: %v", project, err)
+					}
+				} else {
+					logger.Info("[DRY-RUN] Would remove project: %s", project)
+				}
+			}
+		}
+	}
+
 	logger.Info("Health check complete")
 	return startedProjects, nil
+}
+
+// CleanupOrphans removes Konta-managed containers that are no longer in the apps configuration
+// This is useful when there are repository changes but no changes in the apps directory
+func (r *Reconciler) CleanupOrphans() error {
+	logger.Info("Starting orphan cleanup")
+
+	// Get desired projects from git
+	desired, err := r.getDesiredProjects()
+	if err != nil {
+		return fmt.Errorf("failed to get desired projects: %w", err)
+	}
+
+	// Get currently running projects
+	running, err := r.getRunningProjects()
+	if err != nil {
+		return fmt.Errorf("failed to get running projects: %w", err)
+	}
+
+	// Remove orphan projects
+	for _, project := range running {
+		if !contains(desired, project) {
+			logger.Info("Removing orphan Konta-managed project: %s", project)
+			if !r.dryRun {
+				if err := r.downProject(project); err != nil {
+					logger.Error("Failed to remove project %s: %v", project, err)
+				}
+			} else {
+				logger.Info("[DRY-RUN] Would remove project: %s", project)
+			}
+		}
+	}
+
+	logger.Info("Orphan cleanup complete")
+	return nil
 }
 
 func (r *Reconciler) getDesiredProjects() ([]string, error) {
