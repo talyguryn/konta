@@ -1037,7 +1037,7 @@ func reconcileOnce(dryRun bool, version string) error {
 
 	if changedProjects != nil && len(changedProjects) == 0 {
 		logger.Info("No project changes detected in %s, but cleaning up orphans", cfg.Repository.Path)
-		
+
 		// Even with no project changes, we should clean up orphan containers
 		// that may have been moved out of the apps directory
 		if !dryRun {
@@ -1047,7 +1047,7 @@ func reconcileOnce(dryRun bool, version string) error {
 				// Don't fail on orphan cleanup, just warn
 			}
 		}
-		
+
 		if !dryRun {
 			if err := state.UpdateWithProjects(newCommit, []string{}); err != nil {
 				logger.Error("Failed to update state for no-change commit: %v", err)
