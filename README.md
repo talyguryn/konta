@@ -239,6 +239,7 @@ Konta supports lifecycle hooks that allow you to run custom scripts at different
 - `pre.sh` — Runs before any changes are applied. Use this for tasks like backing up data, sending notifications, or performing checks. If this script exits with a non-zero status, the deployment will be aborted, and the `failure.sh` hook will be triggered.
 - `success.sh` — Runs after successful deployment. Use this for tasks like clearing caches, sending success notifications, or performing post-deploy checks.
 - `failure.sh` — Runs if deployment fails. Use this for tasks like sending failure notifications, rolling back changes, or performing cleanup.
+- `started.sh` — Runs when the Konta daemon starts up. Use this for initialization tasks, notifications, or cleanup actions.
 - `post_update.sh` — Runs after Konta itself is updated. Use this for tasks like restarting the Konta daemon or performing any necessary migrations.
 
 ## Commands
@@ -303,12 +304,13 @@ logging:
 # Update behavior for Konta itself. By default with `notify`, it will log when updates are available, and you can choose when to update. If set to 'auto', Konta will automatically check for updates and install them (safe minor versions only). Set to 'false' or omit to disable update checks entirely.
 konta_updates: notify
 
-# Optional. You can redefine hooks paths here if you want to use different names or locations for your hook scripts. By default, Konta looks for `pre.sh`, `success.sh`, `failure.sh`, and `post_update.sh` in the `{path}/hooks/` directory of your repository.
+# Optional. You can redefine hooks paths here if you want to use different names or locations for your hook scripts. By default, Konta looks for scripts in the `{path}/hooks/` directory of your repository.
 hooks:
   pre: pre.sh
   success: success.sh
   failure: failure.sh
   post_update: post_update.sh
+  started: started.sh
 ```
 
 ## Updates
