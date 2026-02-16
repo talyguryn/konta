@@ -139,7 +139,7 @@ Each folder inside `apps/` is treated as an independent Docker Compose stack.
 
 **Recommended: One-line curl installer:**
 
-Install the latest version of Konta with a single command. This script detects your OS and architecture, downloads the appropriate binary, and sets it up for you. Also it checks if Docker is installed and running, and prompts you to fix it if not.
+Install the latest version of Konta with a single command. This script detects your OS and architecture, downloads the appropriate binary, and sets it up for you. Also it checks if Git and Docker are installed, and prompts you to fix it if not.
 
 ```bash
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/talyguryn/konta/main/scripts/install.sh)"
