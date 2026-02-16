@@ -1,4 +1,4 @@
-![konta logo](./docs/assets/konta.png)
+![konta logo](./docs/assets/konta-cover.png)
 
 # Konta
 
