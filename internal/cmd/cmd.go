@@ -32,7 +32,7 @@ https://github.com/talyguryn/konta
 GitOps for Docker Compose
 
 Usage:
-	konta install [OPTIONS]
+	konta bootstrap [OPTIONS]
 	konta uninstall
 	konta run [--dry-run] [--watch]
 	konta daemon [enable|disable|restart|status]
@@ -43,7 +43,7 @@ Usage:
 	konta version (-v)
 	konta help (-h)
 
-Install Options:
+Bootstrap Options:
   --repo URL                        GitHub repository URL (required)
   --path PATH                       Base path in repo (contains 'apps' dir, default: repo root)
   --branch BRANCH                   Git branch (default: main)
@@ -62,9 +62,9 @@ Update flags:
   -y                                Skip confirmation and auto-update
 
 Examples:
-  konta install                     # Interactive setup
-  konta install --repo https://github.com/user/infra
-  konta install --repo https://github.com/talyguryn/konta --path spb
+  konta bootstrap                     # Interactive setup
+  konta bootstrap --repo https://github.com/user/infra
+  konta bootstrap --repo https://github.com/talyguryn/konta --path spb
   konta run                         # Single reconciliation
   konta run --watch                 # Watch mode (poll every N seconds)
   konta run --dry-run               # Show what would change
@@ -117,10 +117,10 @@ func Config(edit bool) error {
 	return nil
 }
 
-// Install performs first-time setup with optional CLI parameters
-// Usage: konta install [--repo URL] [--path PATH] [--branch BRANCH] [--interval SECONDS] [--token TOKEN] [--konta_updates auto|notify|false]
-func Install(args []string) error {
-	logger.Info("Starting Konta installation")
+// Bootstrap performs first-time setup with optional CLI parameters
+// Usage: konta bootstrap [--repo URL] [--path PATH] [--branch BRANCH] [--interval SECONDS] [--token TOKEN] [--konta_updates auto|notify|false]
+func Bootstrap(args []string) error {
+	logger.Info("Starting Konta bootstrap")
 
 	// Parse command-line arguments
 	var (

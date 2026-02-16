@@ -9,7 +9,7 @@ import (
 	"github.com/talyguryn/konta/internal/logger"
 )
 
-const Version = "0.1.40"
+const Version = "0.1.41"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -34,10 +34,10 @@ func main() {
 		fmt.Printf("Konta v%s\n", Version)
 		os.Exit(0)
 
-	case "install":
-		installArgs := os.Args[2:]
-		if err := cmd.Install(installArgs); err != nil {
-			logger.Fatal("Install failed: %v", err)
+	case "bootstrap":
+		bootstrapArgs := os.Args[2:]
+		if err := cmd.Bootstrap(bootstrapArgs); err != nil {
+			logger.Fatal("Bootstrap failed: %v", err)
 		}
 
 	case "uninstall":

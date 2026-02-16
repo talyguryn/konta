@@ -155,7 +155,7 @@ main() {
             print_success "Konta v${VERSION} is already installed at ${INSTALL_DIR}/${BINARY_NAME}"
             echo "" >&2
             print_info "Next steps:"
-            echo "  1. Configure: konta install" >&2
+            echo "  1. Configure: konta bootstrap" >&2
             echo "  2. Run once: konta run" >&2
             echo "  3. Enable daemon: sudo konta daemon enable" >&2
             exit 0
@@ -205,7 +205,7 @@ main() {
     print_info "Installation complete!"
     echo "" >&2
     print_info "Next steps:"
-    echo "  1. Configure: konta install" >&2
+    echo "  1. Configure: konta bootstrap" >&2
     echo "  2. Run once: konta run" >&2
     echo "  3. Enable daemon: sudo konta daemon enable" >&2
     echo "" >&2
