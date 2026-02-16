@@ -1,0 +1,14 @@
+services:
+  web:
+    labels:
+      - konta.managed=true
+
+    image: nginx:alpine
+    restart: unless-stopped
+
+    ports:
+      - "80:80"
+
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./html:/usr/share/nginx/html
