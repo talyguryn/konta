@@ -1,4 +1,4 @@
-> ⚠️ This is a public beta release which can contain bugs and security issues. Use at your own risk. Feedback and contributions are welcome!
+![konta logo](./docs/assets/konta.png)
 
 # Konta
 
