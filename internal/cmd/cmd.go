@@ -1202,7 +1202,7 @@ func atomicSwitch(commit string, releaseDir string) error {
 		if err := os.Symlink(targetDir, currentLink); err != nil {
 			return fmt.Errorf("failed to create symlink: %w", err)
 		}
-		logger.Info("Atomic switch completed (reused): %s", commit[:8])
+		logger.Debug("Atomic switch completed (reused): %s", commit[:8])
 		cleanupOldReleases(releasesDir, commit)
 		return nil
 	}
@@ -1248,7 +1248,12 @@ func cleanupOldReleases(releasesDir string, currentCommit string) {
 			logger.Warn("Failed to remove old release %s: %v", name, err)
 			continue
 		}
-		logger.Info("Removed old release: %s", name)
+		// Log at INFO for actual commit releases, DEBUG for temp dirs
+		if strings.HasPrefix(name, "temp-") {
+			logger.Debug("Removed old release: %s", name)
+		} else {
+			logger.Info("Removed old release: %s", name)
+		}
 	}
 }
 
