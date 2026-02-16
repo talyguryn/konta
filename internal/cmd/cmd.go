@@ -1049,11 +1049,18 @@ func reconcileOnce(dryRun bool, version string) error {
 		}
 
 		if !dryRun {
+			// Keep current symlink aligned with latest commit, even if no app changes.
+			if err := atomicSwitch(newCommit, releaseDir); err != nil {
+				logger.Error("Atomic switch failed: %v", err)
+				return err
+			}
 			if err := state.UpdateWithProjects(newCommit, []string{}); err != nil {
 				logger.Error("Failed to update state for no-change commit: %v", err)
 				return err
 			}
 			logger.Info("State updated to new commit (no app changes)")
+		} else {
+			logger.Info("[DRY-RUN] Would switch to commit: %s", newCommit[:8])
 		}
 		return nil
 	}
