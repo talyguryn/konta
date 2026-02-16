@@ -68,6 +68,14 @@ check_docker() {
     return 1
 }
 
+# Check if Git is installed
+check_git() {
+    if command -v git >/dev/null 2>&1; then
+        return 0
+    fi
+    return 1
+}
+
 # Get the latest release version (stdout only, no status messages)
 get_latest_version() {
     version=$(curl -s "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name"' | head -1 | cut -d'"' -f4 2>/dev/null)
@@ -131,6 +139,42 @@ main() {
             print_success "Docker installed successfully"
         else
             print_error "Docker is required. Installation cancelled."
+            exit 1
+        fi
+    fi
+
+    # Check Git
+    if check_git; then
+        print_success "Git detected"
+    else
+        print_warning "Git not found."
+        echo "Install Git automatically? (yes/no) [yes]: " >&2
+        read -r install_git
+        install_git=$(echo "$install_git" | tr '[:upper:]' '[:lower:]')
+
+        if [ -z "$install_git" ] || [ "$install_git" = "yes" ] || [ "$install_git" = "y" ]; then
+            print_info "Installing Git..."
+
+            if [ "$OS" = "linux" ]; then
+                if ! sudo apt-get update && sudo apt-get install -y git; then
+                    print_error "Failed to install Git automatically"
+                    exit 1
+                fi
+            elif [ "$OS" = "darwin" ]; then
+                if ! brew install git; then
+                    print_error "Failed to install Git automatically"
+                    exit 1
+                fi
+            fi
+
+            # Re-check after install
+            if ! check_git; then
+                print_error "Git installation did not complete correctly"
+                exit 1
+            fi
+            print_success "Git installed successfully"
+        else
+            print_error "Git is required. Installation cancelled."
             exit 1
         fi
     fi
