@@ -1,5 +1,18 @@
 > ⚠️ This is a public beta release. Use at your own risk. Feedback and contributions are welcome!
 
+<!--
+
+TODO:
+- Add complete installation guide
+- Describe how Konta works
+
+Think about user cases:
+- Guide how to migrate to new repo structure if you want to change repo?
+- Security problem for PAT: how to add a new server to existing repo without giving it access to all other servers?
+- How to backup and restore docker volumes?
+
+-->
+
 # Konta - GitOps tool for Docker Compose
 
 A lightweight, idempotent deployment system for single-node servers.
