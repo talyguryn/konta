@@ -92,6 +92,9 @@ func Load() (*types.Config, error) {
 	// They are resolved relative to {repo_root}/hooks/ directory
 	hooksBase := filepath.Join(appsBasePath, "hooks")
 
+	if config.Hooks.Started == "" {
+		config.Hooks.Started = "started.sh"
+	}
 	if config.Hooks.Pre == "" {
 		config.Hooks.Pre = "pre.sh"
 	}
@@ -106,6 +109,7 @@ func Load() (*types.Config, error) {
 	}
 
 	// Build absolute paths (relative to repo root, will be resolved later)
+	config.Hooks.StartedAbs = filepath.Join(hooksBase, config.Hooks.Started)
 	config.Hooks.PreAbs = filepath.Join(hooksBase, config.Hooks.Pre)
 	config.Hooks.SuccessAbs = filepath.Join(hooksBase, config.Hooks.Success)
 	config.Hooks.FailureAbs = filepath.Join(hooksBase, config.Hooks.Failure)

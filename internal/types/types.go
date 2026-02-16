@@ -29,10 +29,12 @@ type DeployConf struct {
 
 // HooksConf represents hooks configuration
 type HooksConf struct {
+	Started    string `yaml:"started,omitempty"`     // Just filename: started.sh (found in hooks dir)
 	Pre        string `yaml:"pre,omitempty"`        // Just filename: pre.sh (found in hooks dir)
 	Success    string `yaml:"success,omitempty"`    // Just filename: success.sh (found in hooks dir)
 	Failure    string `yaml:"failure,omitempty"`    // Just filename: failure.sh (found in hooks dir)
 	PostUpdate string `yaml:"post_update,omitempty"` // Just filename: post_update.sh (found in hooks dir)
+	StartedAbs string `yaml:"-"` // Absolute path to started hook (set by config loader)
 	PreAbs     string `yaml:"-"` // Absolute path to pre hook (set by config loader)
 	SuccessAbs string `yaml:"-"` // Absolute path to success hook
 	FailureAbs string `yaml:"-"` // Absolute path to failure hook

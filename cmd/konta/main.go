@@ -9,7 +9,7 @@ import (
 	"github.com/talyguryn/konta/internal/logger"
 )
 
-const Version = "0.1.47"
+const Version = "0.1.48"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -119,7 +119,7 @@ func main() {
 		}
 
 	case "status", "-s":
-		if err := cmd.Status(); err != nil {
+		if err := cmd.Status(Version); err != nil {
 			logger.Fatal("Status failed: %v", err)
 		}
 

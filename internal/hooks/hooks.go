@@ -16,9 +16,10 @@ type Runner struct {
 }
 
 // New creates a new hook runner
-func New(repoDir string, prePath, successPath, failurePath, postUpdatePath string) *Runner {
+func New(repoDir string, startedPath, prePath, successPath, failurePath, postUpdatePath string) *Runner {
 	return &Runner{
 		hookPaths: map[string]string{
+			"started":     startedPath,
 			"pre":         prePath,
 			"success":     successPath,
 			"failure":     failurePath,
@@ -26,6 +27,11 @@ func New(repoDir string, prePath, successPath, failurePath, postUpdatePath strin
 		},
 		repoDir: repoDir,
 	}
+}
+
+// RunStarted runs the started hook (when konta daemon starts)
+func (r *Runner) RunStarted() error {
+	return r.run("started")
 }
 
 // RunPre runs the pre-deploy hook

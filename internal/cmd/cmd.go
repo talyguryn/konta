@@ -788,7 +788,7 @@ func runPostUpdateHook() {
 		return
 	}
 
-	hookRunner := hooks.New(repoDir, cfg.Hooks.PreAbs, cfg.Hooks.SuccessAbs, cfg.Hooks.FailureAbs, cfg.Hooks.PostUpdateAbs)
+	hookRunner := hooks.New(repoDir, cfg.Hooks.StartedAbs, cfg.Hooks.PreAbs, cfg.Hooks.SuccessAbs, cfg.Hooks.FailureAbs, cfg.Hooks.PostUpdateAbs)
 	_ = hookRunner.RunPostUpdate()
 
 	// Restore stdout and stderr
@@ -896,6 +896,30 @@ func Update(currentVersion string, forceYes bool) error {
 
 // Run executes reconciliation once or in watch mode
 func Run(dryRun bool, watch bool, version string) error {
+	// Load config to get hook paths
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+
+	// Run started hook when konta daemon starts
+	if watch {
+		// Get current state to determine repo directory
+		if err := state.Init(); err != nil {
+			return err
+		}
+		currentState, err := state.Load()
+		if err != nil || currentState.LastCommit == "" {
+			logger.Debug("No previous deployment, skipping started hook")
+		} else {
+			currentLink := state.GetCurrentLink()
+			startedHookRunner := hooks.New(currentLink, cfg.Hooks.StartedAbs, cfg.Hooks.PreAbs, cfg.Hooks.SuccessAbs, cfg.Hooks.FailureAbs, cfg.Hooks.PostUpdateAbs)
+			if err := startedHookRunner.RunStarted(); err != nil {
+				logger.Warn("Started hook failed: %v", err)
+			}
+		}
+	}
+
 	// Execute reconciliation once
 	if err := reconcileOnce(dryRun, version); err != nil && !watch {
 		// Only return error if not in watch mode
@@ -1099,7 +1123,7 @@ func reconcileOnce(dryRun bool, version string) error {
 	}
 
 	// Create hook runner
-	hookRunner := hooks.New(releaseDir, cfg.Hooks.PreAbs, cfg.Hooks.SuccessAbs, cfg.Hooks.FailureAbs, cfg.Hooks.PostUpdateAbs)
+	hookRunner := hooks.New(releaseDir, cfg.Hooks.StartedAbs, cfg.Hooks.PreAbs, cfg.Hooks.SuccessAbs, cfg.Hooks.FailureAbs, cfg.Hooks.PostUpdateAbs)
 
 	// Run pre-hook
 	if err := hookRunner.RunPre(); err != nil {
@@ -1138,7 +1162,7 @@ func reconcileOnce(dryRun bool, version string) error {
 	// Run success hook using current symlink (temp directory can now be cleaned)
 	if !dryRun {
 		currentLink := state.GetCurrentLink()
-		successHookRunner := hooks.New(currentLink, cfg.Hooks.PreAbs, cfg.Hooks.SuccessAbs, cfg.Hooks.FailureAbs, cfg.Hooks.PostUpdateAbs)
+		successHookRunner := hooks.New(currentLink, cfg.Hooks.StartedAbs, cfg.Hooks.PreAbs, cfg.Hooks.SuccessAbs, cfg.Hooks.FailureAbs, cfg.Hooks.PostUpdateAbs)
 		if err := successHookRunner.RunSuccess(); err != nil {
 			logger.Error("Success hook failed: %v", err)
 		}
@@ -1151,7 +1175,10 @@ func reconcileOnce(dryRun bool, version string) error {
 }
 
 // Status shows the last deployment status
-func Status() error {
+func Status(version string) error {
+	// Show version
+	fmt.Printf("Konta version: %s\n\n", version)
+
 	// Check daemon status
 	statusCmd := exec.Command("systemctl", "is-active", "konta")
 	output, err := statusCmd.Output()
@@ -1161,6 +1188,20 @@ func Status() error {
 		fmt.Printf("✗ Konta daemon is not running\n")
 	} else {
 		fmt.Printf("✓ Konta daemon is running\n")
+
+		// Get uptime from systemd
+		uptimeCmd := exec.Command("systemctl", "show", "konta", "--property=ActiveEnterTimestamp")
+		if uptimeOutput, err := uptimeCmd.Output(); err == nil {
+			uptimeStr := strings.TrimSpace(string(uptimeOutput))
+			if strings.HasPrefix(uptimeStr, "ActiveEnterTimestamp=") {
+				timestampStr := strings.TrimPrefix(uptimeStr, "ActiveEnterTimestamp=")
+				// Parse timestamp and calculate uptime
+				if startTime, err := time.Parse("Mon 2006-01-02 15:04:05 MST", timestampStr); err == nil {
+					uptime := time.Since(startTime)
+					fmt.Printf("  Uptime: %s\n", formatUptime(uptime))
+				}
+			}
+		}
 	}
 
 	fmt.Println()
@@ -1180,6 +1221,21 @@ func Status() error {
 	}
 
 	return nil
+}
+
+// formatUptime formats a duration into a human-readable uptime string
+func formatUptime(d time.Duration) string {
+	days := int(d.Hours()) / 24
+	hours := int(d.Hours()) % 24
+	minutes := int(d.Minutes()) % 60
+
+	if days > 0 {
+		return fmt.Sprintf("%dd %dh %dm", days, hours, minutes)
+	} else if hours > 0 {
+		return fmt.Sprintf("%dh %dm", hours, minutes)
+	} else {
+		return fmt.Sprintf("%dm", minutes)
+	}
 }
 
 // atomicSwitch performs atomic switch to new release
