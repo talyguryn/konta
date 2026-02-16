@@ -1154,12 +1154,18 @@ func reconcileOnce(dryRun bool, version string) error {
 	// Perform reconciliation
 	reconciler := reconcile.New(cfg, releaseDir, dryRun)
 	reconciler.SetChangedProjects(changedProjects)
-	reconciledProjects, err := reconciler.Reconcile()
+	result, err := reconciler.Reconcile()
 	if err != nil {
 		logger.Error("Reconciliation failed: %v", err)
 		_ = hookRunner.RunFailure(fmt.Sprintf("Reconciliation failed: %v", err))
 		return err
 	}
+
+	// Collect all affected projects for state tracking
+	allAffectedProjects := make([]string, 0)
+	allAffectedProjects = append(allAffectedProjects, result.Updated...)
+	allAffectedProjects = append(allAffectedProjects, result.Added...)
+	allAffectedProjects = append(allAffectedProjects, result.Started...)
 
 	// Atomic switch (only if not dry-run)
 	if !dryRun {
@@ -1170,7 +1176,7 @@ func reconcileOnce(dryRun bool, version string) error {
 		}
 
 		// Update state with final list of reconciled projects
-		if err := state.UpdateWithProjects(newCommit, reconciledProjects); err != nil {
+		if err := state.UpdateWithProjects(newCommit, allAffectedProjects); err != nil {
 			logger.Error("Failed to update state: %v", err)
 			return err
 		}
@@ -1182,10 +1188,10 @@ func reconcileOnce(dryRun bool, version string) error {
 	if !dryRun {
 		currentLink := state.GetCurrentLink()
 		successHookRunner := hooks.New(currentLink, cfg.Hooks.StartedAbs, cfg.Hooks.PreAbs, cfg.Hooks.SuccessAbs, cfg.Hooks.FailureAbs, cfg.Hooks.PostUpdateAbs)
-		if err := successHookRunner.RunSuccess(reconciledProjects); err != nil {
+		if err := successHookRunner.RunSuccess(result); err != nil {
 			logger.Error("Success hook failed: %v", err)
 		}
-	} else if err := hookRunner.RunSuccess(reconciledProjects); err != nil {
+	} else if err := hookRunner.RunSuccess(result); err != nil {
 		logger.Error("Success hook failed: %v", err)
 	}
 

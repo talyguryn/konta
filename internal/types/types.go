@@ -61,3 +61,11 @@ type ProjectState struct {
 	LastCommit     string `json:"last_commit"`      // Last commit that affected this project
 	LastDeployTime string `json:"last_deploy_time"` // When this project was last deployed
 }
+
+// ReconcileResult represents the result of a reconciliation operation
+type ReconcileResult struct {
+	Updated []string `json:"updated"` // Projects that were updated
+	Added   []string `json:"added"`   // Projects that were newly added
+	Removed []string `json:"removed"` // Projects that were removed
+	Started []string `json:"started"` // Projects that were restarted
+}

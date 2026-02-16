@@ -50,9 +50,16 @@ func (r *Reconciler) SetChangedProjects(projects []string) {
 }
 
 // Reconcile performs the reconciliation
-// Returns the list of projects that were actually reconciled
-func (r *Reconciler) Reconcile() ([]string, error) {
+// Returns detailed information about what was updated, added, removed, etc.
+func (r *Reconciler) Reconcile() (*types.ReconcileResult, error) {
 	logger.Info("Starting reconciliation")
+
+	result := &types.ReconcileResult{
+		Updated: []string{},
+		Added:   []string{},
+		Removed: []string{},
+		Started: []string{},
+	}
 
 	// Get desired projects from git
 	desired, err := r.getDesiredProjects()
@@ -81,10 +88,20 @@ func (r *Reconciler) Reconcile() ([]string, error) {
 			continue
 		}
 
+		// Check if project is new or existing
+		isNew := !contains(running, project)
+
 		if err := r.reconcileProject(project); err != nil {
-			return reconciledProjects, fmt.Errorf("failed to reconcile project %s: %w", project, err)
+			return result, fmt.Errorf("failed to reconcile project %s: %w", project, err)
 		}
 		reconciledProjects = append(reconciledProjects, project)
+
+		// Categorize the action
+		if isNew {
+			result.Added = append(result.Added, project)
+		} else {
+			result.Updated = append(result.Updated, project)
+		}
 	}
 
 	// Ensure all desired projects have their containers running
@@ -109,6 +126,7 @@ func (r *Reconciler) Reconcile() ([]string, error) {
 				// Don't return error, just warn - let other projects continue
 			} else {
 				reconciledProjects = append(reconciledProjects, project)
+				result.Started = append(result.Started, project)
 			}
 		}
 	}
@@ -121,6 +139,8 @@ func (r *Reconciler) Reconcile() ([]string, error) {
 			if !r.dryRun {
 				if err := r.downProject(project); err != nil {
 					logger.Error("Failed to remove project %s: %v", project, err)
+				} else {
+					result.Removed = append(result.Removed, project)
 				}
 			} else {
 				logger.Info("[DRY-RUN] Would remove project: %s", project)
@@ -129,7 +149,7 @@ func (r *Reconciler) Reconcile() ([]string, error) {
 	}
 
 	logger.Info("Reconciliation complete")
-	return reconciledProjects, nil
+	return result, nil
 }
 
 // HealthCheck ensures all desired containers are running (used when no code changes detected)

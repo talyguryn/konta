@@ -1,12 +1,14 @@
 package hooks
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 
 	"github.com/talyguryn/konta/internal/logger"
+	"github.com/talyguryn/konta/internal/types"
 )
 
 // Runner manages hook execution
@@ -40,9 +42,15 @@ func (r *Runner) RunPre() error {
 }
 
 // RunSuccess runs the success hook
-// apps: list of applications that were successfully updated
-func (r *Runner) RunSuccess(apps []string) error {
-	return r.run("success", apps...)
+// result: detailed information about updated, added, removed projects
+func (r *Runner) RunSuccess(result *types.ReconcileResult) error {
+	// Convert result to JSON for passing to hook
+	jsonData, err := json.Marshal(result)
+	if err != nil {
+		logger.Warn("Failed to marshal reconcile result: %v", err)
+		return r.run("success")
+	}
+	return r.run("success", string(jsonData))
 }
 
 // RunFailure runs the failure hook
