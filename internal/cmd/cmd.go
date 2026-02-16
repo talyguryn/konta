@@ -815,7 +815,26 @@ func autoUpdate(currentVersion string, release *githubRelease) error {
 
 	runPostUpdateHook()
 
-	logger.Info("Auto-update complete: v%s installed. Restart the daemon to apply.", latestVersion)
+	// Check if daemon is running
+	statusCmd := exec.Command("systemctl", "is-active", "konta")
+	err := statusCmd.Run()
+	isDaemonRunning := err == nil
+
+	if isDaemonRunning {
+		logger.Info("Auto-update complete: v%s installed. Restarting daemon...", latestVersion)
+
+		// Restart the daemon automatically
+		restartCmd := exec.Command("systemctl", "restart", "konta")
+		if err := restartCmd.Run(); err != nil {
+			logger.Warn("Failed to restart daemon after auto-update: %v", err)
+			logger.Info("Please restart manually: sudo konta restart")
+		} else {
+			logger.Info("Daemon restarted successfully with new version")
+		}
+	} else {
+		logger.Info("Auto-update complete: v%s installed. Daemon is not running.", latestVersion)
+	}
+
 	return nil
 }
 
@@ -1128,7 +1147,7 @@ func reconcileOnce(dryRun bool, version string) error {
 	// Run pre-hook
 	if err := hookRunner.RunPre(); err != nil {
 		logger.Error("Pre-hook failed: %v", err)
-		_ = hookRunner.RunFailure()
+		_ = hookRunner.RunFailure(fmt.Sprintf("Pre-hook failed: %v", err))
 		return err
 	}
 
@@ -1138,7 +1157,7 @@ func reconcileOnce(dryRun bool, version string) error {
 	reconciledProjects, err := reconciler.Reconcile()
 	if err != nil {
 		logger.Error("Reconciliation failed: %v", err)
-		_ = hookRunner.RunFailure()
+		_ = hookRunner.RunFailure(fmt.Sprintf("Reconciliation failed: %v", err))
 		return err
 	}
 
@@ -1146,7 +1165,7 @@ func reconcileOnce(dryRun bool, version string) error {
 	if !dryRun {
 		if err := atomicSwitch(newCommit, releaseDir); err != nil {
 			logger.Error("Atomic switch failed: %v", err)
-			_ = hookRunner.RunFailure()
+			_ = hookRunner.RunFailure(fmt.Sprintf("Atomic switch failed: %v", err))
 			return err
 		}
 
@@ -1163,10 +1182,10 @@ func reconcileOnce(dryRun bool, version string) error {
 	if !dryRun {
 		currentLink := state.GetCurrentLink()
 		successHookRunner := hooks.New(currentLink, cfg.Hooks.StartedAbs, cfg.Hooks.PreAbs, cfg.Hooks.SuccessAbs, cfg.Hooks.FailureAbs, cfg.Hooks.PostUpdateAbs)
-		if err := successHookRunner.RunSuccess(); err != nil {
+		if err := successHookRunner.RunSuccess(reconciledProjects); err != nil {
 			logger.Error("Success hook failed: %v", err)
 		}
-	} else if err := hookRunner.RunSuccess(); err != nil {
+	} else if err := hookRunner.RunSuccess(reconciledProjects); err != nil {
 		logger.Error("Success hook failed: %v", err)
 	}
 

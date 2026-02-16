@@ -40,13 +40,15 @@ func (r *Runner) RunPre() error {
 }
 
 // RunSuccess runs the success hook
-func (r *Runner) RunSuccess() error {
-	return r.run("success")
+// apps: list of applications that were successfully updated
+func (r *Runner) RunSuccess(apps []string) error {
+	return r.run("success", apps...)
 }
 
 // RunFailure runs the failure hook
-func (r *Runner) RunFailure() error {
-	return r.run("failure")
+// errorMessage: the error message that caused the failure
+func (r *Runner) RunFailure(errorMessage string) error {
+	return r.run("failure", errorMessage)
 }
 
 // RunPostUpdate runs the post-update hook (executed after konta binary update)
@@ -54,7 +56,7 @@ func (r *Runner) RunPostUpdate() error {
 	return r.run("post_update")
 }
 
-func (r *Runner) run(hookType string) error {
+func (r *Runner) run(hookType string, args ...string) error {
 	hookPath := r.hookPaths[hookType]
 	if hookPath == "" {
 		logger.Debug("No %s hook configured", hookType)
@@ -74,7 +76,9 @@ func (r *Runner) run(hookType string) error {
 
 	logger.Debug("Running %s hook: %s", hookType, hookPath)
 
-	cmd := exec.Command("bash", hookPath)
+	// Prepare command arguments: bash hook_script.sh [arg1] [arg2] ...
+	cmdArgs := append([]string{hookPath}, args...)
+	cmd := exec.Command("bash", cmdArgs...)
 	cmd.Dir = r.repoDir
 
 	// Suppress output for post_update hook, show output for other hooks
