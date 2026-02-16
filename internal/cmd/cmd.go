@@ -242,7 +242,7 @@ func Bootstrap(args []string) error {
 
 	// Display summary
 	fmt.Println()
-	fmt.Println("✅ Setup complete!")
+	fmt.Println("✓ Setup complete!")
 	fmt.Println()
 	fmt.Println("Configuration:")
 	fmt.Printf("  Repository: %s\n", repoURL)
@@ -255,7 +255,7 @@ func Bootstrap(args []string) error {
 	fmt.Println("Starting daemon...")
 	if err := daemonEnable("konta", "/etc/systemd/system/konta.service"); err != nil {
 		logger.Warn("Failed to auto-enable daemon: %v", err)
-		fmt.Printf("\n⚠️  Could not auto-start daemon. To enable it manually, run:\n")
+		fmt.Printf("\n⚠  Could not auto-start daemon. To enable it manually, run:\n")
 		fmt.Printf("    sudo konta daemon enable\n")
 	}
 
@@ -342,13 +342,13 @@ func installInteractive() error {
 	}
 
 	logger.Info("Installation complete")
-	fmt.Println("\n✅ Setup complete!")
+	fmt.Println("\n✓ Setup complete!")
 	fmt.Println("\nStarting daemon...")
 
 	// Automatically enable and start daemon
 	if err := daemonEnable("konta", "/etc/systemd/system/konta.service"); err != nil {
 		logger.Warn("Failed to auto-enable daemon: %v", err)
-		fmt.Printf("\n⚠️  Could not auto-start daemon. To enable it manually, run:\n")
+		fmt.Printf("\n⚠  Could not auto-start daemon. To enable it manually, run:\n")
 		fmt.Printf("    sudo konta daemon enable\n")
 	}
 
@@ -831,7 +831,7 @@ func Update(currentVersion string, forceYes bool) error {
 	latestVersion := strings.TrimPrefix(release.TagName, "v")
 
 	if latestVersion == currentVersion {
-		fmt.Println("✅ Already running the latest version!")
+		fmt.Println("✓ Already running the latest version!")
 		return nil
 	}
 
@@ -861,7 +861,7 @@ func Update(currentVersion string, forceYes bool) error {
 		return err
 	}
 
-	fmt.Printf("✅ Updated to v%s successfully!\n", latestVersion)
+	fmt.Printf("✓ Updated to v%s successfully!\n", latestVersion)
 
 	runPostUpdateHook()
 
@@ -873,7 +873,7 @@ func Update(currentVersion string, forceYes bool) error {
 	if isDaemonRunning {
 		fmt.Println("\nDaemon is running. Attempting automatic restart to apply new version...")
 		if os.Getuid() != 0 {
-			fmt.Println("\n⚠️  Root privileges required to restart daemon.")
+			fmt.Println("\n⚠  Root privileges required to restart daemon.")
 			fmt.Println("Restart manually with: sudo konta restart")
 			return nil
 		}
@@ -881,11 +881,11 @@ func Update(currentVersion string, forceYes bool) error {
 		// Restart the daemon
 		restartCmd := exec.Command("systemctl", "restart", "konta")
 		if err := restartCmd.Run(); err != nil {
-			fmt.Printf("⚠️  Failed to restart daemon: %v\n", err)
+			fmt.Printf("⚠  Failed to restart daemon: %v\n", err)
 			fmt.Println("Restart manually with: sudo konta restart")
 			return nil
 		}
-		fmt.Println("✅ Daemon restarted with new version!")
+		fmt.Println("✓ Daemon restarted with new version!")
 	} else {
 		fmt.Println("\nDaemon is not running. Start it when ready:")
 		fmt.Println("  sudo konta start")
@@ -1158,9 +1158,9 @@ func Status() error {
 
 	status := strings.TrimSpace(string(output))
 	if err != nil || status != "active" {
-		fmt.Printf("❌ Konta daemon is not running\n")
+		fmt.Printf("✗ Konta daemon is not running\n")
 	} else {
-		fmt.Printf("✅ Konta daemon is running\n")
+		fmt.Printf("✓ Konta daemon is running\n")
 	}
 
 	fmt.Println()
@@ -1334,7 +1334,7 @@ WantedBy=multi-user.target
 		return fmt.Errorf("failed to start service: %w", err)
 	}
 
-	fmt.Printf("✅ Konta daemon enabled and started\n")
+	fmt.Printf("✓ Konta daemon enabled and started\n")
 	// fmt.Printf("   Manage:\n")
 	// fmt.Printf("     konta enable     - Enable and start service\n")
 	// fmt.Printf("     konta disable    - Stop and disable service\n")
@@ -1356,7 +1356,7 @@ func daemonDisable(serviceName, serviceFile string) error {
 	stopCmd := exec.Command("systemctl", "stop", serviceName)
 	if err := stopCmd.Run(); err != nil {
 		// Continue even if stop fails (service might not be running)
-		fmt.Printf("⚠️  Failed to stop service (may not be running): %v\n", err)
+		fmt.Printf("⚠  Failed to stop service (may not be running): %v\n", err)
 	}
 
 	// Disable service
@@ -1378,7 +1378,7 @@ func daemonDisable(serviceName, serviceFile string) error {
 		return fmt.Errorf("failed to reload systemd: %w", err)
 	}
 
-	fmt.Printf("✅ Konta daemon disabled\n")
+	fmt.Printf("✓ Konta daemon disabled\n")
 
 	return nil
 }
@@ -1389,13 +1389,13 @@ func daemonStatus(serviceName string) error {
 	output, err := statusCmd.Output()
 
 	if err != nil {
-		fmt.Printf("❌ Konta daemon is not running\n")
+		fmt.Printf("✗ Konta daemon is not running\n")
 		return nil
 	}
 
 	status := strings.TrimSpace(string(output))
 	if status == "active" {
-		fmt.Printf("✅ Konta daemon is running\n")
+		fmt.Printf("✓ Konta daemon is running\n")
 
 		// Show more details
 		getStatusCmd := exec.Command("systemctl", "status", serviceName, "--no-pager")
@@ -1403,7 +1403,7 @@ func daemonStatus(serviceName string) error {
 		getStatusCmd.Stderr = os.Stderr
 		_ = getStatusCmd.Run()
 	} else {
-		fmt.Printf("⚠️  Konta daemon is %s\n", status)
+		fmt.Printf("⚠  Konta daemon is %s\n", status)
 	}
 
 	return nil
@@ -1421,7 +1421,7 @@ func daemonStart(serviceName string) error {
 		return fmt.Errorf("failed to start service: %w", err)
 	}
 
-	fmt.Printf("✅ Konta daemon started\n")
+	fmt.Printf("✓ Konta daemon started\n")
 	return nil
 }
 
@@ -1437,7 +1437,7 @@ func daemonStop(serviceName string) error {
 		return fmt.Errorf("failed to stop service: %w", err)
 	}
 
-	fmt.Printf("✅ Konta daemon stopped\n")
+	fmt.Printf("✓ Konta daemon stopped\n")
 	return nil
 }
 
@@ -1453,6 +1453,6 @@ func daemonRestart(serviceName string) error {
 		return fmt.Errorf("failed to restart service: %w", err)
 	}
 
-	fmt.Printf("✅ Konta daemon restarted\n")
+	fmt.Printf("✓ Konta daemon restarted\n")
 	return nil
 }
