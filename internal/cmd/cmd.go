@@ -1012,6 +1012,16 @@ func reconcileOnce(dryRun bool, version string) error {
 				// Don't return error, just warn
 			}
 		}
+
+		// Ensure current symlink points to the latest known commit even without changes.
+		if !dryRun {
+			if err := atomicSwitch(newCommit, releaseDir); err != nil {
+				logger.Error("Atomic switch failed: %v", err)
+				return err
+			}
+		} else {
+			logger.Info("[DRY-RUN] Would switch to commit: %s", newCommit[:8])
+		}
 		return nil
 	}
 
