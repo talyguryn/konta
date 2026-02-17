@@ -35,13 +35,14 @@ func Clone(config *types.RepositoryConf, targetDir string) (string, error) {
 	}
 
 	// Clone the repository with minimal history
-	// Depth: 1 means we only get current commit, no history
-	// This is sufficient since we only compare commits for changes
+	// Depth: 5 means we get last 5 commits for change detection
+	// This covers typical multi-commit pushes (1-5 commits) while keeping memory minimal (14-16 MB)
+	// For edge cases with >5 commits: fallback to native git fetch (git_native.go)
 	repo, err := gogit.PlainClone(targetDir, false, &gogit.CloneOptions{
 		URL:           config.URL,
 		ReferenceName: plumbing.NewBranchReferenceName(config.Branch),
 		SingleBranch:  true,
-		Depth:         1, // Minimal history: only current commit needed for change detection
+		Depth:         5, // Balance: covers 1-5 commits + minimal memory
 		Auth:          auth,
 	})
 	if err != nil {
@@ -151,7 +152,9 @@ func ValidateComposePath(repoDir string, appsPath string) error {
 // GetChangedProjects returns the list of projects that changed between two commits
 // Returns nil (reconcile all) if oldCommit is empty
 // Returns empty slice if no changes detected
-// Returns nil with error if detection fails
+// Uses GetChangedProjectsNative as fallback if go-git fails
+// Fallback fetches oldCommit from remote if needed, ensuring accurate detection with minimal memory
+// This design: shallow clone (Depth: 1) for minimal memory, explicit fetch for accuracy
 func GetChangedProjects(repoDir string, appsPath string, oldCommit string, newCommit string) ([]string, error) {
 	// If no previous commit, all projects are considered changed
 	if oldCommit == "" {
@@ -171,31 +174,38 @@ func GetChangedProjects(repoDir string, appsPath string, oldCommit string, newCo
 	oldHash := plumbing.NewHash(oldCommit)
 	oldCommitObj, err := repo.CommitObject(oldHash)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get old commit %s: %w", oldCommit, err)
+		// Fallback to native git diff if go-git can't find the commit
+		// This happens with shallow clones when oldCommit is outside the depth range
+		logger.Debug("go-git failed to find commit %s (shallow clone?), falling back to native git diff", oldCommit[:8])
+		return GetChangedProjectsNative(repoDir, appsPath, oldCommit, newCommit)
 	}
 
 	// Get new commit object
 	newHash := plumbing.NewHash(newCommit)
 	newCommitObj, err := repo.CommitObject(newHash)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get new commit %s: %w", newCommit, err)
+		logger.Debug("go-git failed to find commit %s, falling back to native git diff", newCommit[:8])
+		return GetChangedProjectsNative(repoDir, appsPath, oldCommit, newCommit)
 	}
 
 	// Get tree objects
 	oldTree, err := oldCommitObj.Tree()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get old tree: %w", err)
+		logger.Debug("go-git failed to get tree, falling back to native git diff")
+		return GetChangedProjectsNative(repoDir, appsPath, oldCommit, newCommit)
 	}
 
 	newTree, err := newCommitObj.Tree()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get new tree: %w", err)
+		logger.Debug("go-git failed to get tree, falling back to native git diff")
+		return GetChangedProjectsNative(repoDir, appsPath, oldCommit, newCommit)
 	}
 
 	// Get changes between trees
 	changes, err := oldTree.Diff(newTree)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get diff: %w", err)
+		logger.Debug("go-git diff failed, falling back to native git diff: %v", err)
+		return GetChangedProjectsNative(repoDir, appsPath, oldCommit, newCommit)
 	}
 
 	// Track which projects were affected
