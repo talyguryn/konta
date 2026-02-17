@@ -34,12 +34,14 @@ func Clone(config *types.RepositoryConf, targetDir string) (string, error) {
 		}
 	}
 
-	// Clone the repository
+	// Clone the repository with minimal history
+	// Depth: 1 means we only get current commit, no history
+	// This is sufficient since we only compare commits for changes
 	repo, err := gogit.PlainClone(targetDir, false, &gogit.CloneOptions{
 		URL:           config.URL,
 		ReferenceName: plumbing.NewBranchReferenceName(config.Branch),
 		SingleBranch:  true,
-		Depth:         50, // Get recent history to allow change detection between commits
+		Depth:         1, // Minimal history: only current commit needed for change detection
 		Auth:          auth,
 	})
 	if err != nil {
