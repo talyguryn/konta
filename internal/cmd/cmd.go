@@ -1004,11 +1004,11 @@ func Run(dryRun bool, watch bool, version string) error {
 			var ms runtime.MemStats
 			runtime.ReadMemStats(&ms)
 			allocBefore := ms.Alloc
-			
+
 			// First GC pass
 			runtime.GC()
 			debug.FreeOSMemory()
-			
+
 			// Second pass if memory is still high
 			runtime.ReadMemStats(&ms)
 			if ms.Alloc > 50*1024*1024 { // If over 50MB
@@ -1016,7 +1016,7 @@ func Run(dryRun bool, watch bool, version string) error {
 				debug.FreeOSMemory()
 				runtime.GC() // Third pass for stubborn memory
 			}
-			
+
 			// Log memory stats for debugging
 			runtime.ReadMemStats(&ms)
 			if allocBefore > 30*1024*1024 {
