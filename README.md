@@ -23,6 +23,7 @@ No Kubernetes required.
 - [Hooks](#hooks)
 - [Commands](#commands)
 - [Configuration file](#configuration-file)
+- [Konta files dir](#konta-files-dir)
 - [Updates](#updates)
 - [Roadmap and tasks](#roadmap-and-tasks)
 - [Contributing](#contributing)
@@ -313,6 +314,16 @@ hooks:
   started: started.sh
 ```
 
+## Konta files dir
+
+Konta stores data in `/var/lib/konta`. There you can find:
+
+- `state.json` — file with state data for each project: current commit, last deploy time
+- `releases/` — directory with cloned repo state to check updates and switch the release if no problems
+- `current` — link to the current release.
+
+So you can always check the deployed release in `/var/lib/konta/current` if you want to debug something.
+
 ## Updates
 
 All new versions are avaliable on the [releases page](https://github.com/talyguryn/konta/releases).
@@ -338,6 +349,7 @@ When an update is available, Konta will log a message with the new version. If `
 Improvements:
 - [ ] simplify the help command output and make it more user-friendly
 - [ ] add docs describes how Konta works
+- [ ] add settings for updates to load 'next', 'stable' or 'latest' verion of the Konta
 
 Security:
 - [ ] check source code for security issues
