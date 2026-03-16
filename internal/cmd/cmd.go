@@ -1062,6 +1062,7 @@ func reconcileOnce(dryRun bool, version string) error {
 		logger.Warn("Failed to load state: %v", err)
 		currentState = &types.State{}
 	}
+	lastSuccessfulCommit := currentState.LastCommit
 
 	// Clone/update the repository
 	releaseDir := filepath.Join(state.GetReleasesDir(), "temp-"+time.Now().Format("20060102150405"))
@@ -1161,6 +1162,8 @@ func reconcileOnce(dryRun bool, version string) error {
 
 	var ghDeployClient *githubdeploy.Client
 	var ghDeploymentID int64
+	githubCompareURL := ""
+	reportedFailure := false
 	if !dryRun && cfg.Deploy.GitHubDeployments.Enable {
 		githubEnvironment := strings.TrimSpace(cfg.Deploy.GitHubDeployments.Environment)
 		if githubEnvironment == "" {
@@ -1171,6 +1174,11 @@ func reconcileOnce(dryRun bool, version string) error {
 		if err != nil {
 			logger.Warn("GitHub deployment status disabled: %v", err)
 		} else {
+			githubCompareURL = ghDeployClient.CompareURL(lastSuccessfulCommit, newCommit)
+			if err := ghDeployClient.CreateCommitStatus(context.Background(), newCommit, "pending", "Konta deployment in progress", githubCompareURL); err != nil {
+				logger.Warn("Failed to create GitHub commit status (pending): %v", err)
+			}
+
 			ghDeploymentID, err = ghDeployClient.CreateDeploymentAndMarkInProgress(context.Background(), newCommit, githubEnvironment)
 			if err != nil {
 				logger.Warn("Failed to create GitHub deployment status: %v", err)
@@ -1182,15 +1190,43 @@ func reconcileOnce(dryRun bool, version string) error {
 	}
 
 	reportGitHubFailure := func(reason string) {
-		if ghDeployClient == nil || ghDeploymentID == 0 {
+		if ghDeployClient == nil || reportedFailure {
 			return
 		}
+		reportedFailure = true
+
 		reason = strings.TrimSpace(reason)
 		if reason == "" {
 			reason = "deployment failed"
 		}
-		if err := ghDeployClient.CreateDeploymentStatus(context.Background(), ghDeploymentID, "failure", "konta: "+reason); err != nil {
-			logger.Warn("Failed to report GitHub deployment failure status: %v", err)
+		if ghDeploymentID != 0 {
+			if err := ghDeployClient.CreateDeploymentStatus(context.Background(), ghDeploymentID, "failure", "konta: "+reason); err != nil {
+				logger.Warn("Failed to report GitHub deployment failure status: %v", err)
+			}
+		}
+
+		if err := ghDeployClient.CreateCommitStatus(context.Background(), newCommit, "failure", "konta: "+reason, githubCompareURL); err != nil {
+			logger.Warn("Failed to report GitHub commit status (failure): %v", err)
+		}
+
+		commentLines := []string{
+			"## Konta deployment failed",
+			"",
+			"### Failure reason",
+			fmt.Sprintf("> %s", reason),
+			"",
+			"### Details",
+			fmt.Sprintf("- Failed commit: `%s`", newCommit),
+		}
+		if strings.TrimSpace(lastSuccessfulCommit) != "" {
+			commentLines = append(commentLines, fmt.Sprintf("- Last successful deploy commit: `%s`", lastSuccessfulCommit))
+		}
+		if githubCompareURL != "" {
+			commentLines = append(commentLines, fmt.Sprintf("- Compare changes: [view diff](%s)", githubCompareURL))
+		}
+
+		if err := ghDeployClient.CreateCommitComment(context.Background(), newCommit, strings.Join(commentLines, "\n")); err != nil {
+			logger.Warn("Failed to publish GitHub failure comment: %v", err)
 		}
 	}
 
@@ -1273,6 +1309,11 @@ func reconcileOnce(dryRun bool, version string) error {
 	if ghDeployClient != nil && ghDeploymentID != 0 {
 		if err := ghDeployClient.CreateDeploymentStatus(context.Background(), ghDeploymentID, "success", "Konta deployment succeeded"); err != nil {
 			logger.Warn("Failed to report GitHub deployment success status: %v", err)
+		}
+	}
+	if ghDeployClient != nil {
+		if err := ghDeployClient.CreateCommitStatus(context.Background(), newCommit, "success", "Konta deployment succeeded", githubCompareURL); err != nil {
+			logger.Warn("Failed to report GitHub commit status (success): %v", err)
 		}
 	}
 

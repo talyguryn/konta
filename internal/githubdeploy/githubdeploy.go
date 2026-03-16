@@ -103,6 +103,46 @@ func (c *Client) CreateDeploymentStatus(ctx context.Context, deploymentID int64,
 	return c.doJSON(ctx, http.MethodPost, c.endpoint(fmt.Sprintf("/deployments/%d/statuses", deploymentID)), body, nil)
 }
 
+func (c *Client) CreateCommitStatus(ctx context.Context, sha, state, description, targetURL string) error {
+	type request struct {
+		State       string `json:"state"`
+		Context     string `json:"context"`
+		Description string `json:"description,omitempty"`
+		TargetURL   string `json:"target_url,omitempty"`
+	}
+
+	body := request{
+		State:       state,
+		Context:     "konta/deploy",
+		Description: trimDescription(description),
+		TargetURL:   strings.TrimSpace(targetURL),
+	}
+
+	return c.doJSON(ctx, http.MethodPost, c.endpoint(fmt.Sprintf("/statuses/%s", sha)), body, nil)
+}
+
+func (c *Client) CreateCommitComment(ctx context.Context, sha, body string) error {
+	type request struct {
+		Body string `json:"body"`
+	}
+
+	body = strings.TrimSpace(body)
+	if body == "" {
+		return fmt.Errorf("comment body is empty")
+	}
+
+	return c.doJSON(ctx, http.MethodPost, c.endpoint(fmt.Sprintf("/commits/%s/comments", sha)), request{Body: body}, nil)
+}
+
+func (c *Client) CompareURL(base, head string) string {
+	base = strings.TrimSpace(base)
+	head = strings.TrimSpace(head)
+	if base == "" || head == "" {
+		return ""
+	}
+	return fmt.Sprintf("https://github.com/%s/%s/compare/%s...%s", c.owner, c.repo, base, head)
+}
+
 func (c *Client) endpoint(path string) string {
 	return fmt.Sprintf("%s/repos/%s/%s%s", apiBaseURL, c.owner, c.repo, path)
 }

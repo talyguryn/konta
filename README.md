@@ -296,8 +296,9 @@ repository:
   interval: 60
 
 # When atomic: true, Konta implements atomic/zero-downtime deployments using symlink-based switching. Instead of applying changes directly.
-# github_deployments enables built-in GitHub Deployment status reporting (in_progress/success/failure)
-# using repository.url + repository.token. The environment defaults to production.
+# github_deployments enables built-in GitHub Deployment statuses, commit statuses,
+# and failure comments on the failed commit with reason + compare link.
+# Uses repository.url + repository.token. The environment defaults to production.
 deploy:
   atomic: true
   github_deployments:
