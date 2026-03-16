@@ -120,6 +120,9 @@ func UpdateWithProjects(commit string, reconciledProjects []string) error {
 	// Update the global state
 	currentState.LastCommit = commit
 	currentState.LastDeployTime = time.Now().Format("2006-01-02 15:04:05")
+	currentState.LastAttemptedCommit = commit
+	currentState.LastAttemptStatus = "success"
+	currentState.LastAttemptTime = time.Now().Format("2006-01-02 15:04:05")
 	currentState.Version = "0.1.0"
 
 	// Update per-project state for reconciled projects
@@ -136,6 +139,26 @@ func UpdateWithProjects(commit string, reconciledProjects []string) error {
 	}
 
 	logger.Info("State updated: commit=%s", commit)
+	return nil
+}
+
+// MarkAttempt stores information about the latest deployment attempt.
+func MarkAttempt(commit string, status string) error {
+	currentState, err := Load()
+	if err != nil {
+		logger.Warn("Failed to load existing state: %v", err)
+		currentState = &types.State{}
+	}
+
+	currentState.LastAttemptedCommit = commit
+	currentState.LastAttemptStatus = status
+	currentState.LastAttemptTime = time.Now().Format("2006-01-02 15:04:05")
+
+	if err := Save(currentState); err != nil {
+		return err
+	}
+
+	logger.Debug("State attempt updated: commit=%s status=%s", commit, status)
 	return nil
 }
 

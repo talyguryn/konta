@@ -56,10 +56,13 @@ type LoggingConf struct {
 
 // State represents deployment state
 type State struct {
-	LastCommit     string                 `json:"last_commit"`
-	LastDeployTime string                 `json:"last_deploy_time"`
-	Version        string                 `json:"version"`
-	Projects       map[string]ProjectState `json:"projects,omitempty"` // Per-project state for change detection
+	LastCommit           string                 `json:"last_commit"`
+	LastDeployTime       string                 `json:"last_deploy_time"`
+	LastAttemptedCommit  string                 `json:"last_attempted_commit,omitempty"`
+	LastAttemptStatus    string                 `json:"last_attempt_status,omitempty"` // in_progress, success, failure
+	LastAttemptTime      string                 `json:"last_attempt_time,omitempty"`
+	Version              string                 `json:"version"`
+	Projects             map[string]ProjectState `json:"projects,omitempty"` // Per-project state for change detection
 }
 
 // ProjectState represents the state of an individual project

@@ -1118,6 +1118,11 @@ func reconcileOnce(dryRun bool, version string) error {
 	}
 	logger.Info("New commit detected: %s -> %s", lastCommitStr, newCommit[:8])
 
+	if !dryRun && strings.TrimSpace(currentState.LastAttemptedCommit) == newCommit && currentState.LastAttemptStatus == "failure" {
+		logger.Warn("Skipping automatic redeploy for previously failed commit %s", newCommit[:8])
+		return nil
+	}
+
 	// Validate compose path
 	if err := git.ValidateComposePath(releaseDir, cfg.Repository.Path); err != nil {
 		return err
@@ -1170,6 +1175,7 @@ func reconcileOnce(dryRun bool, version string) error {
 	var ghDeployClient *githubdeploy.Client
 	var ghDeploymentID int64
 	githubCompareURL := ""
+	stableCommitURL := ""
 	reportedFailure := false
 	if !dryRun && cfg.Deploy.GitHubDeployments.Enable {
 		githubEnvironment := strings.TrimSpace(cfg.Deploy.GitHubDeployments.Environment)
@@ -1182,6 +1188,7 @@ func reconcileOnce(dryRun bool, version string) error {
 			logger.Warn("GitHub deployment status disabled: %v", err)
 		} else {
 			githubCompareURL = ghDeployClient.CompareURL(lastSuccessfulCommit, newCommit)
+			stableCommitURL = ghDeployClient.CommitURL(stableRollbackCommit)
 			if err := ghDeployClient.CreateCommitStatus(context.Background(), newCommit, "pending", "Konta deployment in progress", githubCompareURL); err != nil {
 				logger.Warn("Failed to create GitHub commit status (pending): %v", err)
 			}
@@ -1196,11 +1203,19 @@ func reconcileOnce(dryRun bool, version string) error {
 		}
 	}
 
-	reportGitHubFailure := func(reason string, rollbackNote string) {
-		if ghDeployClient == nil || reportedFailure {
+	reportGitHubFailure := func(reason string, rollbackNote string, rollbackCompleted bool) {
+		if reportedFailure {
 			return
 		}
 		reportedFailure = true
+		if !dryRun {
+			if err := state.MarkAttempt(newCommit, "failure"); err != nil {
+				logger.Warn("Failed to persist failed deployment attempt: %v", err)
+			}
+		}
+		if ghDeployClient == nil {
+			return
+		}
 
 		reason = strings.TrimSpace(reason)
 		if reason == "" {
@@ -1227,39 +1242,54 @@ func reconcileOnce(dryRun bool, version string) error {
 		commentLines := []string{
 			"## Konta deployment failed",
 			"",
-			fmt.Sprintf("Deploy of this commit `%s` failed.", failedCommitShort),
+			markdownBlockquote(reason),
+			"",
+			"## Result",
+			"",
+			fmt.Sprintf("- Deploy of this commit `%s` failed.", failedCommitShort),
 		}
 		if lastSuccessfulCommitShort != "" {
-			commentLines = append(commentLines, fmt.Sprintf("Last successful deploy commit `%s`.", lastSuccessfulCommitShort))
+			commentLines = append(commentLines, fmt.Sprintf("- Last successful deploy commit `%s`.", lastSuccessfulCommitShort))
 		}
-		if strings.Contains(strings.ToLower(rollbackNote), "rollback completed") {
-			commentLines = append(commentLines, "Rollback completed to stable commit.")
+		if rollbackCompleted && stableCommitURL != "" {
+			stableLabel := "stable commit"
+			if lastSuccessfulCommitShort != "" {
+				stableLabel = fmt.Sprintf("stable commit `%s`", lastSuccessfulCommitShort)
+			}
+			commentLines = append(commentLines, fmt.Sprintf("- Rollback completed to [%s](%s).", stableLabel, stableCommitURL))
+		} else if rollbackCompleted {
+			commentLines = append(commentLines, "- Rollback completed to stable commit.")
 		} else if strings.TrimSpace(rollbackNote) != "" {
-			commentLines = append(commentLines, rollbackNote)
+			commentLines = append(commentLines, fmt.Sprintf("- %s", rollbackNote))
 		}
 		if githubCompareURL != "" {
-			commentLines = append(commentLines, fmt.Sprintf("See not applied edits: [view diff](%s).", githubCompareURL))
+			commentLines = append(commentLines, "", fmt.Sprintf("See not applied edits: [view diff](%s).", githubCompareURL))
 		}
-		commentLines = append(commentLines, "", fmt.Sprintf("> %s", reason))
 
 		if err := ghDeployClient.CreateCommitComment(context.Background(), newCommit, strings.Join(commentLines, "\n")); err != nil {
 			logger.Warn("Failed to publish GitHub failure comment: %v", err)
 		}
 	}
 
-	attemptRollback := func() string {
+	attemptRollback := func() (string, bool) {
 		if dryRun {
-			return ""
+			return "", false
 		}
 		if stableRollbackCommit == "" {
 			logger.Warn("Automatic rollback skipped: no stable successful release commit found")
-			return "Rollback skipped: no stable successful release commit found."
+			return "Rollback skipped: no stable successful release commit found.", false
 		}
 		if err := rollbackToStable(cfg, stableRollbackCommit, changedProjects); err != nil {
 			logger.Error("Rollback failed: %v", err)
-			return fmt.Sprintf("Rollback failed: %v", err)
+			return fmt.Sprintf("Rollback failed: %v", err), false
 		}
-		return fmt.Sprintf("Rollback completed to stable commit `%s`.", stableRollbackCommit)
+		return fmt.Sprintf("Rollback completed to stable commit `%s`.", stableRollbackCommit), true
+	}
+
+	if !dryRun {
+		if err := state.MarkAttempt(newCommit, "in_progress"); err != nil {
+			logger.Warn("Failed to persist deployment attempt state: %v", err)
+		}
 	}
 
 	// Create hook runner
@@ -1269,7 +1299,7 @@ func reconcileOnce(dryRun bool, version string) error {
 	if err := hookRunner.RunPre(); err != nil {
 		logger.Error("Pre-hook failed: %v", err)
 		_ = hookRunner.RunFailure(fmt.Sprintf("Pre-hook failed: %v", err))
-		reportGitHubFailure(fmt.Sprintf("Pre-hook failed: %v", err), "")
+		reportGitHubFailure(fmt.Sprintf("Pre-hook failed: %v", err), "", false)
 		return err
 	}
 
@@ -1280,8 +1310,8 @@ func reconcileOnce(dryRun bool, version string) error {
 	if err != nil {
 		logger.Error("Reconciliation failed: %v", err)
 		_ = hookRunner.RunFailure(fmt.Sprintf("Reconciliation failed: %v", err))
-		rollbackNote := attemptRollback()
-		reportGitHubFailure(fmt.Sprintf("Reconciliation failed: %v", err), rollbackNote)
+		rollbackNote, rollbackCompleted := attemptRollback()
+		reportGitHubFailure(fmt.Sprintf("Reconciliation failed: %v", err), rollbackNote, rollbackCompleted)
 		return err
 	}
 
@@ -1296,16 +1326,16 @@ func reconcileOnce(dryRun bool, version string) error {
 		if err := atomicSwitch(newCommit, releaseDir); err != nil {
 			logger.Error("Atomic switch failed: %v", err)
 			_ = hookRunner.RunFailure(fmt.Sprintf("Atomic switch failed: %v", err))
-			rollbackNote := attemptRollback()
-			reportGitHubFailure(fmt.Sprintf("Atomic switch failed: %v", err), rollbackNote)
+			rollbackNote, rollbackCompleted := attemptRollback()
+			reportGitHubFailure(fmt.Sprintf("Atomic switch failed: %v", err), rollbackNote, rollbackCompleted)
 			return err
 		}
 
 		// Update state with final list of reconciled projects
 		if err := state.UpdateWithProjects(newCommit, allAffectedProjects); err != nil {
 			logger.Error("Failed to update state: %v", err)
-			rollbackNote := attemptRollback()
-			reportGitHubFailure(fmt.Sprintf("Failed to update state: %v", err), rollbackNote)
+			rollbackNote, rollbackCompleted := attemptRollback()
+			reportGitHubFailure(fmt.Sprintf("Failed to update state: %v", err), rollbackNote, rollbackCompleted)
 			return err
 		}
 		cleanupOldReleases(state.GetReleasesDir(), newCommit)
@@ -1401,6 +1431,25 @@ func formatUptime(d time.Duration) string {
 	} else {
 		return fmt.Sprintf("%dm", minutes)
 	}
+}
+
+func markdownBlockquote(text string) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return "> deployment failed"
+	}
+
+	lines := strings.Split(text, "\n")
+	for i := range lines {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			lines[i] = ">"
+		} else {
+			lines[i] = "> " + line
+		}
+	}
+
+	return strings.Join(lines, "\n")
 }
 
 // atomicSwitch performs atomic switch to new release

@@ -143,6 +143,14 @@ func (c *Client) CompareURL(base, head string) string {
 	return fmt.Sprintf("https://github.com/%s/%s/compare/%s...%s", c.owner, c.repo, base, head)
 }
 
+func (c *Client) CommitURL(sha string) string {
+	sha = strings.TrimSpace(sha)
+	if sha == "" {
+		return ""
+	}
+	return fmt.Sprintf("https://github.com/%s/%s/commit/%s", c.owner, c.repo, sha)
+}
+
 func (c *Client) endpoint(path string) string {
 	return fmt.Sprintf("%s/repos/%s/%s%s", apiBaseURL, c.owner, c.repo, path)
 }
