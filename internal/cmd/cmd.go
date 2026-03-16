@@ -1363,6 +1363,11 @@ func reconcileOnce(dryRun bool, version string) error {
 		if err := ghDeployClient.CreateCommitStatus(context.Background(), newCommit, "success", "Konta deployment succeeded", githubCompareURL); err != nil {
 			logger.Warn("Failed to report GitHub commit status (success): %v", err)
 		}
+
+		successComment := buildSuccessComment(newCommit, lastSuccessfulCommit, githubCompareURL, result)
+		if err := ghDeployClient.CreateCommitComment(context.Background(), newCommit, successComment); err != nil {
+			logger.Warn("Failed to publish GitHub success comment: %v", err)
+		}
 	}
 
 	logger.Info("Deployment complete")
@@ -1447,6 +1452,63 @@ func markdownBlockquote(text string) string {
 		} else {
 			lines[i] = "> " + line
 		}
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+func shortCommitHash(commit string) string {
+	commit = strings.TrimSpace(commit)
+	if len(commit) > 8 {
+		return commit[:8]
+	}
+	return commit
+}
+
+func appendAppList(lines []string, title string, apps []string) []string {
+	if len(apps) == 0 {
+		return lines
+	}
+
+	lines = append(lines, fmt.Sprintf("### %s", title))
+	for _, app := range apps {
+		lines = append(lines, fmt.Sprintf("- `%s`", app))
+	}
+	lines = append(lines, "")
+	return lines
+}
+
+func buildSuccessComment(newCommit string, previousCommit string, compareURL string, result *types.ReconcileResult) string {
+	newShort := shortCommitHash(newCommit)
+	previousShort := shortCommitHash(previousCommit)
+
+	lines := []string{
+		"## Konta deployment succeeded",
+		"",
+		fmt.Sprintf("- Deploy of this commit `%s` succeeded.", newShort),
+	}
+
+	if previousShort != "" {
+		lines = append(lines, fmt.Sprintf("- Previous stable deploy commit `%s`.", previousShort))
+	}
+	if compareURL != "" {
+		lines = append(lines, fmt.Sprintf("- Applied edits: [view diff](%s).", compareURL))
+	}
+
+	lines = append(lines, "", "## Result", "")
+
+	if result == nil {
+		lines = append(lines, "- No app-level changes were reported.")
+		return strings.Join(lines, "\n")
+	}
+
+	lines = appendAppList(lines, "Added", result.Added)
+	lines = appendAppList(lines, "Updated", result.Updated)
+	lines = appendAppList(lines, "Started", result.Started)
+	lines = appendAppList(lines, "Removed", result.Removed)
+
+	if len(result.Added) == 0 && len(result.Updated) == 0 && len(result.Started) == 0 && len(result.Removed) == 0 {
+		lines = append(lines, "- No app-level changes were reported.")
 	}
 
 	return strings.Join(lines, "\n")
