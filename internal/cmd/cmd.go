@@ -1063,6 +1063,11 @@ func reconcileOnce(dryRun bool, version string) error {
 		currentState = &types.State{}
 	}
 	lastSuccessfulCommit := currentState.LastCommit
+	if currentReleaseCommit, currentReleaseErr := state.GetCurrentReleaseCommit(); currentReleaseErr == nil {
+		lastSuccessfulCommit = currentReleaseCommit
+	} else if currentState.LastCommit != "" {
+		logger.Debug("Failed to get current release commit from symlink, using state fallback: %v", currentReleaseErr)
+	}
 
 	// Clone/update the repository
 	releaseDir := filepath.Join(state.GetReleasesDir(), "temp-"+time.Now().Format("20060102150405"))

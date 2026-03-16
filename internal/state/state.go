@@ -153,3 +153,20 @@ func GetReleasesDir() string {
 func GetCurrentLink() string {
 	return filepath.Join(getStateDir(), "current")
 }
+
+// GetCurrentReleaseCommit returns the commit hash of the currently active release
+// by resolving the current symlink target under releases/<commit>.
+func GetCurrentReleaseCommit() (string, error) {
+	currentLink := GetCurrentLink()
+	resolvedPath, err := filepath.EvalSymlinks(currentLink)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve current symlink: %w", err)
+	}
+
+	commit := filepath.Base(resolvedPath)
+	if commit == "" || commit == "." || commit == string(filepath.Separator) {
+		return "", fmt.Errorf("invalid current release path: %s", resolvedPath)
+	}
+
+	return commit, nil
+}
