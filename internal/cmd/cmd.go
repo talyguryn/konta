@@ -221,8 +221,11 @@ func Bootstrap(args []string) error {
 			Interval: interval,
 		},
 		Deploy: types.DeployConf{
-			Atomic:       true,
-			GitHubStatus: true,
+			Atomic: true,
+			GitHubDeployments: types.GitHubDeploymentsConf{
+				Enable:      true,
+				Environment: "production",
+			},
 		},
 		Logging: types.LoggingConf{
 			Level: "info",
@@ -327,8 +330,11 @@ func installInteractive() error {
 			Interval: interval,
 		},
 		Deploy: types.DeployConf{
-			Atomic:       true,
-			GitHubStatus: true,
+			Atomic: true,
+			GitHubDeployments: types.GitHubDeploymentsConf{
+				Enable:      true,
+				Environment: "production",
+			},
 		},
 		Logging: types.LoggingConf{
 			Level: "info",
@@ -1155,17 +1161,22 @@ func reconcileOnce(dryRun bool, version string) error {
 
 	var ghDeployClient *githubdeploy.Client
 	var ghDeploymentID int64
-	if !dryRun && cfg.Deploy.GitHubStatus {
+	if !dryRun && cfg.Deploy.GitHubDeployments.Enable {
+		githubEnvironment := strings.TrimSpace(cfg.Deploy.GitHubDeployments.Environment)
+		if githubEnvironment == "" {
+			githubEnvironment = "production"
+		}
+
 		ghDeployClient, err = githubdeploy.New(cfg.Repository.URL, cfg.Repository.Token)
 		if err != nil {
 			logger.Warn("GitHub deployment status disabled: %v", err)
 		} else {
-			ghDeploymentID, err = ghDeployClient.CreateDeploymentAndMarkInProgress(context.Background(), newCommit, "production")
+			ghDeploymentID, err = ghDeployClient.CreateDeploymentAndMarkInProgress(context.Background(), newCommit, githubEnvironment)
 			if err != nil {
 				logger.Warn("Failed to create GitHub deployment status: %v", err)
 				ghDeploymentID = 0
 			} else {
-				logger.Info("GitHub deployment started (id=%d)", ghDeploymentID)
+				logger.Info("GitHub deployment started (id=%d, environment=%s)", ghDeploymentID, githubEnvironment)
 			}
 		}
 	}
@@ -1174,7 +1185,11 @@ func reconcileOnce(dryRun bool, version string) error {
 		if ghDeployClient == nil || ghDeploymentID == 0 {
 			return
 		}
-		if err := ghDeployClient.CreateDeploymentStatus(context.Background(), ghDeploymentID, "failure", reason); err != nil {
+		reason = strings.TrimSpace(reason)
+		if reason == "" {
+			reason = "deployment failed"
+		}
+		if err := ghDeployClient.CreateDeploymentStatus(context.Background(), ghDeploymentID, "failure", "konta: "+reason); err != nil {
 			logger.Warn("Failed to report GitHub deployment failure status: %v", err)
 		}
 	}
@@ -1191,7 +1206,7 @@ func reconcileOnce(dryRun bool, version string) error {
 		}
 		if err := state.UpdateWithProjects(newCommit, projectsToProcess); err != nil {
 			logger.Error("Failed to update state: %v", err)
-			reportGitHubFailure("Failed to update state")
+			reportGitHubFailure(fmt.Sprintf("Failed to update state: %v", err))
 			return err
 		}
 		logger.Debug("State updated to commit %s before processing", newCommit[:8])
@@ -1204,7 +1219,7 @@ func reconcileOnce(dryRun bool, version string) error {
 	if err := hookRunner.RunPre(); err != nil {
 		logger.Error("Pre-hook failed: %v", err)
 		_ = hookRunner.RunFailure(fmt.Sprintf("Pre-hook failed: %v", err))
-		reportGitHubFailure("Pre-hook failed")
+		reportGitHubFailure(fmt.Sprintf("Pre-hook failed: %v", err))
 		return err
 	}
 
@@ -1215,7 +1230,7 @@ func reconcileOnce(dryRun bool, version string) error {
 	if err != nil {
 		logger.Error("Reconciliation failed: %v", err)
 		_ = hookRunner.RunFailure(fmt.Sprintf("Reconciliation failed: %v", err))
-		reportGitHubFailure("Reconciliation failed")
+		reportGitHubFailure(fmt.Sprintf("Reconciliation failed: %v", err))
 		return err
 	}
 
@@ -1230,14 +1245,14 @@ func reconcileOnce(dryRun bool, version string) error {
 		if err := atomicSwitch(newCommit, releaseDir); err != nil {
 			logger.Error("Atomic switch failed: %v", err)
 			_ = hookRunner.RunFailure(fmt.Sprintf("Atomic switch failed: %v", err))
-			reportGitHubFailure("Atomic switch failed")
+			reportGitHubFailure(fmt.Sprintf("Atomic switch failed: %v", err))
 			return err
 		}
 
 		// Update state with final list of reconciled projects
 		if err := state.UpdateWithProjects(newCommit, allAffectedProjects); err != nil {
 			logger.Error("Failed to update state: %v", err)
-			reportGitHubFailure("Failed to update state")
+			reportGitHubFailure(fmt.Sprintf("Failed to update state: %v", err))
 			return err
 		}
 	} else {

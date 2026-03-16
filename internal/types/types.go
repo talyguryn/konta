@@ -21,11 +21,16 @@ type RepositoryConf struct {
 
 // DeployConf represents deployment configuration
 type DeployConf struct {
-	Atomic bool `yaml:"atomic,omitempty"`
-	Parallel bool `yaml:"parallel,omitempty"`
-	DryRun bool `yaml:"dry_run,omitempty"`
-	GitHubStatus bool `yaml:"github_status,omitempty"`
+	Atomic            bool                  `yaml:"atomic,omitempty"`
+	Parallel          bool                  `yaml:"parallel,omitempty"`
+	DryRun            bool                  `yaml:"dry_run,omitempty"`
+	GitHubDeployments GitHubDeploymentsConf `yaml:"github_deployments,omitempty"`
 	// RemoveOrphans is always enabled by default to keep disk space clean
+}
+
+type GitHubDeploymentsConf struct {
+	Enable      bool   `yaml:"enable,omitempty"`
+	Environment string `yaml:"environment,omitempty"`
 }
 
 // HooksConf represents hooks configuration

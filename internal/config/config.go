@@ -53,8 +53,11 @@ func Load() (*types.Config, error) {
 			Branch:   "main",
 		},
 		Deploy: types.DeployConf{
-			Atomic:       true,
-			GitHubStatus: true,
+			Atomic: true,
+			GitHubDeployments: types.GitHubDeploymentsConf{
+				Enable:      true,
+				Environment: "production",
+			},
 		},
 		Logging: types.LoggingConf{
 			Level: "info",
