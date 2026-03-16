@@ -24,6 +24,7 @@ type DeployConf struct {
 	Atomic bool `yaml:"atomic,omitempty"`
 	Parallel bool `yaml:"parallel,omitempty"`
 	DryRun bool `yaml:"dry_run,omitempty"`
+	GitHubStatus bool `yaml:"github_status,omitempty"`
 	// RemoveOrphans is always enabled by default to keep disk space clean
 }
 

@@ -53,7 +53,8 @@ func Load() (*types.Config, error) {
 			Branch:   "main",
 		},
 		Deploy: types.DeployConf{
-			Atomic: true,
+			Atomic:       true,
+			GitHubStatus: true,
 		},
 		Logging: types.LoggingConf{
 			Level: "info",

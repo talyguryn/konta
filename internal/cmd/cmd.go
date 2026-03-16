@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/talyguryn/konta/internal/config"
 	"github.com/talyguryn/konta/internal/git"
+	"github.com/talyguryn/konta/internal/githubdeploy"
 	"github.com/talyguryn/konta/internal/hooks"
 	"github.com/talyguryn/konta/internal/lock"
 	"github.com/talyguryn/konta/internal/logger"
@@ -219,7 +221,8 @@ func Bootstrap(args []string) error {
 			Interval: interval,
 		},
 		Deploy: types.DeployConf{
-			Atomic: true,
+			Atomic:       true,
+			GitHubStatus: true,
 		},
 		Logging: types.LoggingConf{
 			Level: "info",
@@ -324,7 +327,8 @@ func installInteractive() error {
 			Interval: interval,
 		},
 		Deploy: types.DeployConf{
-			Atomic: true,
+			Atomic:       true,
+			GitHubStatus: true,
 		},
 		Logging: types.LoggingConf{
 			Level: "info",
@@ -1149,6 +1153,32 @@ func reconcileOnce(dryRun bool, version string) error {
 		logger.Info("Reconciling all projects (first deployment or change detection unavailable)")
 	}
 
+	var ghDeployClient *githubdeploy.Client
+	var ghDeploymentID int64
+	if !dryRun && cfg.Deploy.GitHubStatus {
+		ghDeployClient, err = githubdeploy.New(cfg.Repository.URL, cfg.Repository.Token)
+		if err != nil {
+			logger.Warn("GitHub deployment status disabled: %v", err)
+		} else {
+			ghDeploymentID, err = ghDeployClient.CreateDeploymentAndMarkInProgress(context.Background(), newCommit, "production")
+			if err != nil {
+				logger.Warn("Failed to create GitHub deployment status: %v", err)
+				ghDeploymentID = 0
+			} else {
+				logger.Info("GitHub deployment started (id=%d)", ghDeploymentID)
+			}
+		}
+	}
+
+	reportGitHubFailure := func(reason string) {
+		if ghDeployClient == nil || ghDeploymentID == 0 {
+			return
+		}
+		if err := ghDeployClient.CreateDeploymentStatus(context.Background(), ghDeploymentID, "failure", reason); err != nil {
+			logger.Warn("Failed to report GitHub deployment failure status: %v", err)
+		}
+	}
+
 	// Update state before processing to avoid re-trying failed deployments
 	// This ensures that if pre-hook or deployment fails, we don't retry the same commit on next run
 	if !dryRun {
@@ -1161,6 +1191,7 @@ func reconcileOnce(dryRun bool, version string) error {
 		}
 		if err := state.UpdateWithProjects(newCommit, projectsToProcess); err != nil {
 			logger.Error("Failed to update state: %v", err)
+			reportGitHubFailure("Failed to update state")
 			return err
 		}
 		logger.Debug("State updated to commit %s before processing", newCommit[:8])
@@ -1173,6 +1204,7 @@ func reconcileOnce(dryRun bool, version string) error {
 	if err := hookRunner.RunPre(); err != nil {
 		logger.Error("Pre-hook failed: %v", err)
 		_ = hookRunner.RunFailure(fmt.Sprintf("Pre-hook failed: %v", err))
+		reportGitHubFailure("Pre-hook failed")
 		return err
 	}
 
@@ -1183,6 +1215,7 @@ func reconcileOnce(dryRun bool, version string) error {
 	if err != nil {
 		logger.Error("Reconciliation failed: %v", err)
 		_ = hookRunner.RunFailure(fmt.Sprintf("Reconciliation failed: %v", err))
+		reportGitHubFailure("Reconciliation failed")
 		return err
 	}
 
@@ -1197,12 +1230,14 @@ func reconcileOnce(dryRun bool, version string) error {
 		if err := atomicSwitch(newCommit, releaseDir); err != nil {
 			logger.Error("Atomic switch failed: %v", err)
 			_ = hookRunner.RunFailure(fmt.Sprintf("Atomic switch failed: %v", err))
+			reportGitHubFailure("Atomic switch failed")
 			return err
 		}
 
 		// Update state with final list of reconciled projects
 		if err := state.UpdateWithProjects(newCommit, allAffectedProjects); err != nil {
 			logger.Error("Failed to update state: %v", err)
+			reportGitHubFailure("Failed to update state")
 			return err
 		}
 	} else {
@@ -1218,6 +1253,12 @@ func reconcileOnce(dryRun bool, version string) error {
 		}
 	} else if err := hookRunner.RunSuccess(result); err != nil {
 		logger.Error("Success hook failed: %v", err)
+	}
+
+	if ghDeployClient != nil && ghDeploymentID != 0 {
+		if err := ghDeployClient.CreateDeploymentStatus(context.Background(), ghDeploymentID, "success", "Konta deployment succeeded"); err != nil {
+			logger.Warn("Failed to report GitHub deployment success status: %v", err)
+		}
 	}
 
 	logger.Info("Deployment complete")

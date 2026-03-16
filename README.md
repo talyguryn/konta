@@ -9,6 +9,7 @@ Sync it automatically.
 No Kubernetes required.
 
 ## Table of Contents
+
 - [Quick start](#quick-start)
 - [Why Konta](#why-konta)
 - [Who Is This For](#who-is-this-for)
@@ -163,6 +164,7 @@ Binaries are available on the [releases page](https://github.com/talyguryn/konta
 ### Bootstrap Konta with your repository:
 
 **Interactive mode (default):**
+
 ```bash
 sudo konta bootstrap
 ```
@@ -179,7 +181,6 @@ Shortest form with default values:
 - `--path .`
 - `--interval 120`
 - `--konta_updates notify`
-
 
 ```bash
 sudo konta bootstrap \
@@ -295,8 +296,10 @@ repository:
   interval: 60
 
 # When atomic: true, Konta implements atomic/zero-downtime deployments using symlink-based switching. Instead of applying changes directly.
+# github_status enables built-in GitHub Deployment status reporting (in_progress/success/failure) using repository.url + repository.token.
 deploy:
   atomic: true
+  github_status: true
 
 # Logging level for Konta's internal operations on journal. Options are debug, info, warn, error. Default is info. Set to debug for more verbose output during troubleshooting.
 logging:
@@ -347,17 +350,21 @@ When an update is available, Konta will log a message with the new version. If `
 `v1.0.0` should be stable and production-ready, but there are still some improvements and features to work on. Here are some of the tasks on the roadmap:
 
 Improvements:
+
 - [ ] simplify the help command output and make it more user-friendly
 - [ ] add docs describes how Konta works
 - [ ] add settings for updates to load 'next', 'stable' or 'latest' verion of the Konta
 
 Security:
+
 - [ ] check source code for security issues
 
 Testing:
+
 - [ ] add tests that simulate real-world scenarios (e.g., network failures, repo access issues, etc.)
 
 Research:
+
 - [ ] how to migrate to new repo structure if you want to change repo
 - [ ] how to implement atomic deployments with zero downtime
 - [ ] how to backup and restore docker volumes
