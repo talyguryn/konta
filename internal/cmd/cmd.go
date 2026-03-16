@@ -1068,6 +1068,7 @@ func reconcileOnce(dryRun bool, version string) error {
 	} else if currentState.LastCommit != "" {
 		logger.Debug("Failed to get current release commit from symlink, using state fallback: %v", currentReleaseErr)
 	}
+	stableRollbackCommit := strings.TrimSpace(lastSuccessfulCommit)
 
 	// Clone/update the repository
 	releaseDir := filepath.Join(state.GetReleasesDir(), "temp-"+time.Now().Format("20060102150405"))
@@ -1152,6 +1153,7 @@ func reconcileOnce(dryRun bool, version string) error {
 				logger.Error("Failed to update state for no-change commit: %v", err)
 				return err
 			}
+			cleanupOldReleases(state.GetReleasesDir(), newCommit)
 			logger.Info("State updated to new commit (no app changes)")
 		} else {
 			logger.Info("[DRY-RUN] Would switch to commit: %s", newCommit[:8])
@@ -1194,7 +1196,7 @@ func reconcileOnce(dryRun bool, version string) error {
 		}
 	}
 
-	reportGitHubFailure := func(reason string) {
+	reportGitHubFailure := func(reason string, rollbackNote string) {
 		if ghDeployClient == nil || reportedFailure {
 			return
 		}
@@ -1203,6 +1205,14 @@ func reconcileOnce(dryRun bool, version string) error {
 		reason = strings.TrimSpace(reason)
 		if reason == "" {
 			reason = "deployment failed"
+		}
+		failedCommitShort := newCommit
+		if len(failedCommitShort) > 8 {
+			failedCommitShort = failedCommitShort[:8]
+		}
+		lastSuccessfulCommitShort := strings.TrimSpace(lastSuccessfulCommit)
+		if len(lastSuccessfulCommitShort) > 8 {
+			lastSuccessfulCommitShort = lastSuccessfulCommitShort[:8]
 		}
 		if ghDeploymentID != 0 {
 			if err := ghDeployClient.CreateDeploymentStatus(context.Background(), ghDeploymentID, "failure", "konta: "+reason); err != nil {
@@ -1217,40 +1227,39 @@ func reconcileOnce(dryRun bool, version string) error {
 		commentLines := []string{
 			"## Konta deployment failed",
 			"",
-			"### Failure reason",
-			fmt.Sprintf("> %s", reason),
-			"",
-			"### Details",
-			fmt.Sprintf("- Failed commit: `%s`", newCommit),
+			fmt.Sprintf("Deploy of this commit `%s` failed.", failedCommitShort),
 		}
-		if strings.TrimSpace(lastSuccessfulCommit) != "" {
-			commentLines = append(commentLines, fmt.Sprintf("- Last successful deploy commit: `%s`", lastSuccessfulCommit))
+		if lastSuccessfulCommitShort != "" {
+			commentLines = append(commentLines, fmt.Sprintf("Last successful deploy commit `%s`.", lastSuccessfulCommitShort))
+		}
+		if strings.Contains(strings.ToLower(rollbackNote), "rollback completed") {
+			commentLines = append(commentLines, "Rollback completed to stable commit.")
+		} else if strings.TrimSpace(rollbackNote) != "" {
+			commentLines = append(commentLines, rollbackNote)
 		}
 		if githubCompareURL != "" {
-			commentLines = append(commentLines, fmt.Sprintf("- Compare changes: [view diff](%s)", githubCompareURL))
+			commentLines = append(commentLines, fmt.Sprintf("See not applied edits: [view diff](%s).", githubCompareURL))
 		}
+		commentLines = append(commentLines, "", fmt.Sprintf("> %s", reason))
 
 		if err := ghDeployClient.CreateCommitComment(context.Background(), newCommit, strings.Join(commentLines, "\n")); err != nil {
 			logger.Warn("Failed to publish GitHub failure comment: %v", err)
 		}
 	}
 
-	// Update state before processing to avoid re-trying failed deployments
-	// This ensures that if pre-hook or deployment fails, we don't retry the same commit on next run
-	if !dryRun {
-		// Store the projects we're about to process (or empty if not yet determined)
-		projectsToProcess := changedProjects
-		if projectsToProcess == nil {
-			// We'll reconcile all projects, but we don't know the list yet
-			// Update with empty list for now, will update again with actual list after reconciliation
-			projectsToProcess = []string{}
+	attemptRollback := func() string {
+		if dryRun {
+			return ""
 		}
-		if err := state.UpdateWithProjects(newCommit, projectsToProcess); err != nil {
-			logger.Error("Failed to update state: %v", err)
-			reportGitHubFailure(fmt.Sprintf("Failed to update state: %v", err))
-			return err
+		if stableRollbackCommit == "" {
+			logger.Warn("Automatic rollback skipped: no stable successful release commit found")
+			return "Rollback skipped: no stable successful release commit found."
 		}
-		logger.Debug("State updated to commit %s before processing", newCommit[:8])
+		if err := rollbackToStable(cfg, stableRollbackCommit, changedProjects); err != nil {
+			logger.Error("Rollback failed: %v", err)
+			return fmt.Sprintf("Rollback failed: %v", err)
+		}
+		return fmt.Sprintf("Rollback completed to stable commit `%s`.", stableRollbackCommit)
 	}
 
 	// Create hook runner
@@ -1260,7 +1269,7 @@ func reconcileOnce(dryRun bool, version string) error {
 	if err := hookRunner.RunPre(); err != nil {
 		logger.Error("Pre-hook failed: %v", err)
 		_ = hookRunner.RunFailure(fmt.Sprintf("Pre-hook failed: %v", err))
-		reportGitHubFailure(fmt.Sprintf("Pre-hook failed: %v", err))
+		reportGitHubFailure(fmt.Sprintf("Pre-hook failed: %v", err), "")
 		return err
 	}
 
@@ -1271,7 +1280,8 @@ func reconcileOnce(dryRun bool, version string) error {
 	if err != nil {
 		logger.Error("Reconciliation failed: %v", err)
 		_ = hookRunner.RunFailure(fmt.Sprintf("Reconciliation failed: %v", err))
-		reportGitHubFailure(fmt.Sprintf("Reconciliation failed: %v", err))
+		rollbackNote := attemptRollback()
+		reportGitHubFailure(fmt.Sprintf("Reconciliation failed: %v", err), rollbackNote)
 		return err
 	}
 
@@ -1286,16 +1296,19 @@ func reconcileOnce(dryRun bool, version string) error {
 		if err := atomicSwitch(newCommit, releaseDir); err != nil {
 			logger.Error("Atomic switch failed: %v", err)
 			_ = hookRunner.RunFailure(fmt.Sprintf("Atomic switch failed: %v", err))
-			reportGitHubFailure(fmt.Sprintf("Atomic switch failed: %v", err))
+			rollbackNote := attemptRollback()
+			reportGitHubFailure(fmt.Sprintf("Atomic switch failed: %v", err), rollbackNote)
 			return err
 		}
 
 		// Update state with final list of reconciled projects
 		if err := state.UpdateWithProjects(newCommit, allAffectedProjects); err != nil {
 			logger.Error("Failed to update state: %v", err)
-			reportGitHubFailure(fmt.Sprintf("Failed to update state: %v", err))
+			rollbackNote := attemptRollback()
+			reportGitHubFailure(fmt.Sprintf("Failed to update state: %v", err), rollbackNote)
 			return err
 		}
+		cleanupOldReleases(state.GetReleasesDir(), newCommit)
 	} else {
 		logger.Info("[DRY-RUN] Would switch to commit: %s", newCommit[:8])
 	}
@@ -1411,7 +1424,6 @@ func atomicSwitch(commit string, releaseDir string) error {
 			return fmt.Errorf("failed to create symlink: %w", err)
 		}
 		logger.Debug("Atomic switch completed (reused): %s", commit[:8])
-		cleanupOldReleases(releasesDir, commit)
 		return nil
 	}
 
@@ -1429,7 +1441,44 @@ func atomicSwitch(commit string, releaseDir string) error {
 	}
 
 	logger.Info("Atomic switch completed: %s", commit[:8])
-	cleanupOldReleases(releasesDir, commit)
+	return nil
+}
+
+func rollbackToStable(cfg *types.Config, stableCommit string, changedProjects []string) error {
+	stableCommit = strings.TrimSpace(stableCommit)
+	if stableCommit == "" {
+		return fmt.Errorf("no stable commit available for rollback")
+	}
+
+	stableReleaseDir := filepath.Join(state.GetReleasesDir(), stableCommit)
+	if _, err := os.Stat(stableReleaseDir); err != nil {
+		return fmt.Errorf("stable release directory not found for %s: %w", stableCommit, err)
+	}
+
+	logger.Warn("Starting rollback to stable release: %s", stableCommit)
+
+	reconciler := reconcile.New(cfg, stableReleaseDir, false)
+	reconciler.SetChangedProjects(changedProjects)
+	result, err := reconciler.Reconcile()
+	if err != nil {
+		return fmt.Errorf("rollback reconciliation failed: %w", err)
+	}
+
+	allAffectedProjects := make([]string, 0)
+	allAffectedProjects = append(allAffectedProjects, result.Updated...)
+	allAffectedProjects = append(allAffectedProjects, result.Added...)
+	allAffectedProjects = append(allAffectedProjects, result.Started...)
+
+	if err := atomicSwitch(stableCommit, stableReleaseDir); err != nil {
+		return fmt.Errorf("rollback switch failed: %w", err)
+	}
+
+	if err := state.UpdateWithProjects(stableCommit, allAffectedProjects); err != nil {
+		return fmt.Errorf("rollback state update failed: %w", err)
+	}
+
+	cleanupOldReleases(state.GetReleasesDir(), stableCommit)
+	logger.Warn("Rollback completed to stable release: %s", stableCommit)
 	return nil
 }
 
