@@ -1079,7 +1079,9 @@ func reconcileOnce(dryRun bool, version string, isFirstRun bool) error {
 	if activeCommitForCleanup == "" {
 		activeCommitForCleanup = currentState.LastCommit
 	}
-	defer cleanupOldReleases(state.GetReleasesDir(), activeCommitForCleanup)
+	defer func() {
+		cleanupOldReleases(state.GetReleasesDir(), activeCommitForCleanup, stableRollbackCommit)
+	}()
 
 	// Clone/update the repository
 	releaseDir := filepath.Join(state.GetReleasesDir(), "temp-"+time.Now().Format("20060102150405"))
@@ -1638,7 +1640,7 @@ func rollbackToStable(cfg *types.Config, stableCommit string, changedProjects []
 
 	stableReleaseDir := filepath.Join(state.GetReleasesDir(), stableCommit)
 	if _, err := os.Stat(stableReleaseDir); err != nil {
-		return fmt.Errorf("stable release directory not found for %s: %w", stableCommit, err)
+		return fmt.Errorf("stable release directory not found for %s: %w", stableCommit[:8], err)
 	}
 
 	logger.Warn("Starting rollback to stable release: %s", stableCommit)
@@ -1668,7 +1670,7 @@ func rollbackToStable(cfg *types.Config, stableCommit string, changedProjects []
 		return fmt.Errorf("rollback state update failed: %w", err)
 	}
 
-	cleanupOldReleases(state.GetReleasesDir(), stableCommit)
+	// GC is handled by the outer defer in reconcileOnce (keeps both stable and active commits).
 	logger.Warn("Rollback completed to stable release: %s", stableCommit)
 	return nil
 }
@@ -1711,11 +1713,18 @@ func uniqueSortedProjects(projects []string) []string {
 	return unique
 }
 
-// cleanupOldReleases removes old release directories to avoid unused data buildup
-func cleanupOldReleases(releasesDir string, currentCommit string) {
-	currentCommit = strings.TrimSpace(currentCommit)
-	if currentCommit == "" {
-		logger.Debug("Skipping release cleanup: current commit is empty")
+// cleanupOldReleases removes old release directories to avoid unused data buildup.
+// keepCommits lists all commit SHAs (and temp dir names) that must be preserved.
+func cleanupOldReleases(releasesDir string, keepCommits ...string) {
+	keep := make(map[string]bool)
+	for _, c := range keepCommits {
+		c = strings.TrimSpace(c)
+		if c != "" {
+			keep[c] = true
+		}
+	}
+	if len(keep) == 0 {
+		logger.Debug("Skipping release cleanup: no commits to keep specified")
 		return
 	}
 
@@ -1731,7 +1740,7 @@ func cleanupOldReleases(releasesDir string, currentCommit string) {
 		}
 
 		name := entry.Name()
-		if name == currentCommit {
+		if keep[name] {
 			continue
 		}
 
