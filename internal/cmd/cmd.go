@@ -222,7 +222,7 @@ func Bootstrap(args []string) error {
 		},
 		Deploy: types.DeployConf{
 			ProjectNameHashMode: "rolling_only",
-			RollingHealthTimeoutSeconds: 20,
+			RollingHealthTimeoutSeconds: 120,
 			RollingHealthRetries: 1,
 			GitHubDeployments: types.GitHubDeploymentsConf{
 				Enable:      true,
@@ -333,7 +333,7 @@ func installInteractive() error {
 		},
 		Deploy: types.DeployConf{
 			ProjectNameHashMode: "rolling_only",
-			RollingHealthTimeoutSeconds: 20,
+			RollingHealthTimeoutSeconds: 120,
 			RollingHealthRetries: 1,
 			GitHubDeployments: types.GitHubDeploymentsConf{
 				Enable:      true,
