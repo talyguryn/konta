@@ -1353,6 +1353,23 @@ func reconcileOnce(dryRun bool, version string, isFirstRun bool) error {
 
 	// Perform reconciliation
 	reconciler := reconcile.New(cfg, releaseDir, dryRun, newCommit)
+
+	// Ensure projects marked with konta.recreate=true are always reconciled
+	if changedProjects != nil {
+		recreateProjects, err := findProjectsMarkedForRecreate(filepath.Join(releaseDir, cfg.Repository.Path))
+		if err != nil {
+			logger.Warn("Failed to find konta.recreate projects: %v", err)
+		} else if len(recreateProjects) > 0 {
+			for _, project := range recreateProjects {
+				if !contains(changedProjects, project) {
+					changedProjects = append(changedProjects, project)
+				}
+			}
+			changedProjects = uniqueSortedProjects(changedProjects)
+			logger.Info("Added %d konta.recreate project(s) to reconcile list: %v", len(recreateProjects), recreateProjects)
+		}
+	}
+
 	reconciler.SetChangedProjects(changedProjects)
 	result, err := reconciler.Reconcile()
 	reconciledResult = result
@@ -2108,6 +2125,46 @@ func daemonStop(serviceName string) error {
 
 	fmt.Printf("✓ Konta daemon stopped\n")
 	return nil
+}
+
+// findProjectsMarkedForRecreate scans apps directory and returns projects that have konta.recreate=true label
+func findProjectsMarkedForRecreate(appsDir string) ([]string, error) {
+	entries, err := os.ReadDir(appsDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read apps directory: %w", err)
+	}
+
+	var recreateProjects []string
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+
+		projectName := entry.Name()
+		composePath := filepath.Join(appsDir, projectName, "docker-compose.yml")
+
+		data, err := os.ReadFile(composePath)
+		if err != nil {
+			continue // No compose file, skip
+		}
+
+		content := strings.ToLower(string(data))
+		if strings.Contains(content, "konta.recreate=true") {
+			recreateProjects = append(recreateProjects, projectName)
+		}
+	}
+
+	sort.Strings(recreateProjects)
+	return recreateProjects, nil
+}
+
+func contains(slice []string, item string) bool {
+	for _, v := range slice {
+		if v == item {
+			return true
+		}
+	}
+	return false
 }
 
 func daemonRestart(serviceName string) error {
