@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -1296,7 +1297,10 @@ func reconcileOnce(dryRun bool, version string, isFirstRun bool) error {
 		}
 	}
 
-	attemptRollback := func() (string, bool) {
+	var reconciledResult *types.ReconcileResult
+	allAffectedProjects := make([]string, 0)
+
+	attemptRollback := func(rollbackProjects []string) (string, bool) {
 		if dryRun {
 			return "", false
 		}
@@ -1304,7 +1308,7 @@ func reconcileOnce(dryRun bool, version string, isFirstRun bool) error {
 			logger.Warn("Automatic rollback skipped: no stable successful release commit found")
 			return "Rollback skipped: no stable successful release commit found.", false
 		}
-		if err := rollbackToStable(cfg, stableRollbackCommit, changedProjects); err != nil {
+		if err := rollbackToStable(cfg, stableRollbackCommit, rollbackProjects); err != nil {
 			logger.Error("Rollback failed: %v", err)
 			return fmt.Sprintf("Rollback failed: %v", err), false
 		}
@@ -1332,26 +1336,28 @@ func reconcileOnce(dryRun bool, version string, isFirstRun bool) error {
 	reconciler := reconcile.New(cfg, releaseDir, dryRun, newCommit)
 	reconciler.SetChangedProjects(changedProjects)
 	result, err := reconciler.Reconcile()
+	reconciledResult = result
 	if err != nil {
 		logger.Error("Reconciliation failed: %v", err)
 		_ = hookRunner.RunFailure(fmt.Sprintf("Reconciliation failed: %v", err))
-		rollbackNote, rollbackCompleted := attemptRollback()
+		rollbackProjects := rollbackProjectsForFailure(changedProjects, reconciledResult)
+		rollbackNote, rollbackCompleted := attemptRollback(rollbackProjects)
 		reportGitHubFailure(fmt.Sprintf("Reconciliation failed: %v", err), rollbackNote, rollbackCompleted)
 		return err
 	}
 
 	// Collect all affected projects for state tracking
-	allAffectedProjects := make([]string, 0)
 	allAffectedProjects = append(allAffectedProjects, result.Updated...)
 	allAffectedProjects = append(allAffectedProjects, result.Added...)
 	allAffectedProjects = append(allAffectedProjects, result.Started...)
+	allAffectedProjects = uniqueSortedProjects(allAffectedProjects)
 
 	// Atomic switch (only if not dry-run)
 	if !dryRun {
 		if err := atomicSwitch(newCommit, releaseDir); err != nil {
 			logger.Error("Atomic switch failed: %v", err)
 			_ = hookRunner.RunFailure(fmt.Sprintf("Atomic switch failed: %v", err))
-			rollbackNote, rollbackCompleted := attemptRollback()
+			rollbackNote, rollbackCompleted := attemptRollback(allAffectedProjects)
 			reportGitHubFailure(fmt.Sprintf("Atomic switch failed: %v", err), rollbackNote, rollbackCompleted)
 			return err
 		}
@@ -1359,7 +1365,7 @@ func reconcileOnce(dryRun bool, version string, isFirstRun bool) error {
 		// Update state with final list of reconciled projects
 		if err := state.UpdateWithProjects(newCommit, allAffectedProjects); err != nil {
 			logger.Error("Failed to update state: %v", err)
-			rollbackNote, rollbackCompleted := attemptRollback()
+			rollbackNote, rollbackCompleted := attemptRollback(allAffectedProjects)
 			reportGitHubFailure(fmt.Sprintf("Failed to update state: %v", err), rollbackNote, rollbackCompleted)
 			return err
 		}
@@ -1638,6 +1644,11 @@ func rollbackToStable(cfg *types.Config, stableCommit string, changedProjects []
 	logger.Warn("Starting rollback to stable release: %s", stableCommit)
 
 	reconciler := reconcile.New(cfg, stableReleaseDir, false, stableCommit)
+	if len(changedProjects) == 0 {
+		logger.Warn("Rollback project scope is empty; reconciling all projects as a fallback")
+	} else {
+		logger.Warn("Rollback will reconcile %d affected project(s): %v", len(changedProjects), changedProjects)
+	}
 	reconciler.SetChangedProjects(changedProjects)
 	result, err := reconciler.Reconcile()
 	if err != nil {
@@ -1660,6 +1671,44 @@ func rollbackToStable(cfg *types.Config, stableCommit string, changedProjects []
 	cleanupOldReleases(state.GetReleasesDir(), stableCommit)
 	logger.Warn("Rollback completed to stable release: %s", stableCommit)
 	return nil
+}
+
+func rollbackProjectsForFailure(changedProjects []string, result *types.ReconcileResult) []string {
+	if len(changedProjects) > 0 {
+		return uniqueSortedProjects(changedProjects)
+	}
+
+	projects := make([]string, 0)
+	if result != nil {
+		projects = append(projects, result.Updated...)
+		projects = append(projects, result.Added...)
+		projects = append(projects, result.Started...)
+		if strings.TrimSpace(result.Failed) != "" {
+			projects = append(projects, strings.TrimSpace(result.Failed))
+		}
+	}
+
+	return uniqueSortedProjects(projects)
+}
+
+func uniqueSortedProjects(projects []string) []string {
+	if len(projects) == 0 {
+		return nil
+	}
+
+	seen := make(map[string]bool)
+	unique := make([]string, 0, len(projects))
+	for _, project := range projects {
+		project = strings.TrimSpace(project)
+		if project == "" || seen[project] {
+			continue
+		}
+		seen[project] = true
+		unique = append(unique, project)
+	}
+
+	sort.Strings(unique)
+	return unique
 }
 
 // cleanupOldReleases removes old release directories to avoid unused data buildup

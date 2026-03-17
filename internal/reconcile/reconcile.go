@@ -95,6 +95,7 @@ func (r *Reconciler) Reconcile() (*types.ReconcileResult, error) {
 		isNew := !contains(running, project)
 
 		if err := r.reconcileProject(project); err != nil {
+			result.Failed = project
 			return result, fmt.Errorf("failed to reconcile project %s: %w", project, err)
 		}
 		reconciledProjects = append(reconciledProjects, project)

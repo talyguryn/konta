@@ -81,4 +81,5 @@ type ReconcileResult struct {
 	Added   []string `json:"added"`   // Projects that were newly added
 	Removed []string `json:"removed"` // Projects that were removed
 	Started []string `json:"started"` // Projects that were restarted
+	Failed  string   `json:"failed,omitempty"` // Project that failed during reconcile, if any
 }
