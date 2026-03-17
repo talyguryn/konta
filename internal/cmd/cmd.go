@@ -3,9 +3,12 @@ package cmd
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"os/exec"
@@ -1158,8 +1161,22 @@ func reconcileOnce(dryRun bool, version string, isFirstRun bool) error {
 	// Detect which projects have changed
 	changedProjects, err := git.GetChangedProjects(releaseDir, cfg.Repository.Path, currentState.LastCommit, newCommit)
 	if err != nil {
-		logger.Warn("Failed to detect changed projects: %v (will reconcile all)", err)
-		changedProjects = nil // nil means reconcile all
+		logger.Warn("Failed to detect changed projects via git diff: %v", err)
+
+		currentReleaseDir, currentReleaseErr := filepath.EvalSymlinks(state.GetCurrentLink())
+		if currentReleaseErr != nil {
+			logger.Warn("Snapshot diff fallback unavailable (cannot resolve current release): %v (will reconcile all)", currentReleaseErr)
+			changedProjects = nil // nil means reconcile all
+		} else {
+			snapshotChangedProjects, snapshotErr := detectChangedProjectsBySnapshot(currentReleaseDir, releaseDir, cfg.Repository.Path)
+			if snapshotErr != nil {
+				logger.Warn("Snapshot diff fallback failed: %v (will reconcile all)", snapshotErr)
+				changedProjects = nil // nil means reconcile all
+			} else {
+				changedProjects = snapshotChangedProjects
+				logger.Info("Snapshot diff fallback detected %d changed project(s): %v", len(changedProjects), changedProjects)
+			}
+		}
 	}
 
 	if changedProjects != nil && len(changedProjects) == 0 {
@@ -1756,6 +1773,132 @@ func cleanupOldReleases(releasesDir string, keepCommits ...string) {
 			logger.Info("Removed old release: %s", name)
 		}
 	}
+}
+
+// detectChangedProjectsBySnapshot compares app project directories between the
+// current active release and a newly cloned release.
+// This is used as a conservative fallback when git diff cannot be computed
+// (for example, shallow history gaps after long daemon downtime).
+func detectChangedProjectsBySnapshot(currentReleaseDir string, newReleaseDir string, appsPath string) ([]string, error) {
+	currentAppsDir := filepath.Join(currentReleaseDir, appsPath)
+	newAppsDir := filepath.Join(newReleaseDir, appsPath)
+
+	currentProjects, err := listProjectsWithCompose(currentAppsDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list current projects: %w", err)
+	}
+
+	newProjects, err := listProjectsWithCompose(newAppsDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list new projects: %w", err)
+	}
+
+	allProjectNames := make(map[string]bool)
+	for project := range currentProjects {
+		allProjectNames[project] = true
+	}
+	for project := range newProjects {
+		allProjectNames[project] = true
+	}
+
+	changed := make([]string, 0)
+	for project := range allProjectNames {
+		currentProjectDir, inCurrent := currentProjects[project]
+		newProjectDir, inNew := newProjects[project]
+
+		if !inCurrent || !inNew {
+			changed = append(changed, project)
+			continue
+		}
+
+		currentHash, err := dirContentHash(currentProjectDir)
+		if err != nil {
+			return nil, fmt.Errorf("failed to hash current project %s: %w", project, err)
+		}
+
+		newHash, err := dirContentHash(newProjectDir)
+		if err != nil {
+			return nil, fmt.Errorf("failed to hash new project %s: %w", project, err)
+		}
+
+		if currentHash != newHash {
+			changed = append(changed, project)
+		}
+	}
+
+	sort.Strings(changed)
+	return changed, nil
+}
+
+func listProjectsWithCompose(appsDir string) (map[string]string, error) {
+	entries, err := os.ReadDir(appsDir)
+	if err != nil {
+		return nil, err
+	}
+
+	projects := make(map[string]string)
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+
+		projectName := entry.Name()
+		projectDir := filepath.Join(appsDir, projectName)
+		composePath := filepath.Join(projectDir, "docker-compose.yml")
+		if _, err := os.Stat(composePath); err == nil {
+			projects[projectName] = projectDir
+		}
+	}
+
+	return projects, nil
+}
+
+func dirContentHash(dir string) (string, error) {
+	hasher := sha256.New()
+
+	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+
+		relPath, err := filepath.Rel(dir, path)
+		if err != nil {
+			return err
+		}
+
+		relPath = filepath.ToSlash(relPath)
+		if relPath == "." {
+			return nil
+		}
+
+		if strings.Contains(relPath, "/.git/") || strings.HasPrefix(relPath, ".git/") {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		if d.IsDir() {
+			_, _ = hasher.Write([]byte("D:" + relPath + "\n"))
+			return nil
+		}
+
+		_, _ = hasher.Write([]byte("F:" + relPath + "\n"))
+
+		fileData, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+
+		fileHash := sha256.Sum256(fileData)
+		_, _ = hasher.Write(fileHash[:])
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+
+	return hex.EncodeToString(hasher.Sum(nil)), nil
 }
 
 func listDesiredProjectsForStatePrune(appsDir string) ([]string, error) {

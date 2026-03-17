@@ -117,8 +117,22 @@ func reconcileOnceFetch(dryRun bool, version string) error {
 	// Detect which projects have changed (using persistent repo, not temporary)
 	changedProjects, err := git.GetChangedProjects(persistentRepoDir, cfg.Repository.Path, currentState.LastCommit, newCommit)
 	if err != nil {
-		logger.Warn("Failed to detect changes: %v (will reconcile all)", err)
-		changedProjects = nil
+		logger.Warn("Failed to detect changes via git diff: %v", err)
+
+		currentReleaseDir, currentReleaseErr := filepath.EvalSymlinks(state.GetCurrentLink())
+		if currentReleaseErr != nil {
+			logger.Warn("Snapshot diff fallback unavailable (cannot resolve current release): %v (will reconcile all)", currentReleaseErr)
+			changedProjects = nil
+		} else {
+			snapshotChangedProjects, snapshotErr := detectChangedProjectsBySnapshot(currentReleaseDir, persistentRepoDir, cfg.Repository.Path)
+			if snapshotErr != nil {
+				logger.Warn("Snapshot diff fallback failed: %v (will reconcile all)", snapshotErr)
+				changedProjects = nil
+			} else {
+				changedProjects = snapshotChangedProjects
+				logger.Info("Snapshot diff fallback detected %d changed project(s): %v", len(changedProjects), changedProjects)
+			}
+		}
 	}
 
 	// Reconcile with persistent repository
