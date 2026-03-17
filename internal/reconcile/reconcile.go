@@ -107,11 +107,27 @@ func (r *Reconciler) Reconcile() (*types.ReconcileResult, error) {
 		}
 	}
 
-	// Ensure all desired projects have their containers running
-	// This handles cases where containers were stopped but config didn't change
+	// Ensure all desired projects have their containers running.
+	// Handles two cases: stopped containers (docker start) and fully absent
+	// containers — e.g. when a rolling stack was accidentally killed — which
+	// requires a full reconcile so the correct (possibly hash-named) stack is
+	// brought back up.
 	for _, project := range desired {
 		// Skip if we already reconciled this project
 		if contains(reconciledProjects, project) {
+			continue
+		}
+
+		// If the project has no containers at all, run a full reconcile so that
+		// rolling naming, health checks, and label application are all handled.
+		if !r.hasAnyContainersForApp(project) {
+			logger.Info("Project %s has no containers, running full reconcile to restore it", project)
+			if err := r.reconcileProject(project); err != nil {
+				logger.Warn("Failed to restore project %s: %v", project, err)
+			} else {
+				reconciledProjects = append(reconciledProjects, project)
+				result.Started = append(result.Started, project)
+			}
 			continue
 		}
 
@@ -172,8 +188,21 @@ func (r *Reconciler) HealthCheck() ([]string, error) {
 	// Track which projects were started
 	startedProjects := []string{}
 
-	// Check if all desired projects have their containers running
+	// Check if all desired projects have their containers running.
+	// Also recover projects whose containers were fully removed (e.g. a rolling
+	// stack wiped by a previous bug or manual intervention).
 	for _, project := range desired {
+		// Fully missing → full reconcile (handles rolling naming correctly)
+		if !r.hasAnyContainersForApp(project) {
+			logger.Info("Project %s has no containers, running full reconcile to restore it", project)
+			if err := r.reconcileProject(project); err != nil {
+				logger.Warn("Failed to restore project %s: %v", project, err)
+			} else {
+				startedProjects = append(startedProjects, project)
+			}
+			continue
+		}
+
 		hasStoppedContainers, err := r.hasStoppedContainers(project)
 		if err != nil {
 			logger.Warn("Failed to check containers for project %s: %v", project, err)
@@ -725,6 +754,43 @@ func (r *Reconciler) shouldUseHashInProjectName(rollingEnabled bool) bool {
 	default:
 		return rollingEnabled
 	}
+}
+
+// hasAnyContainersForApp returns true when there is at least one container
+// (any state) associated with the given base app name.
+// It checks both the konta.app label (used for rolling stacks) and the
+// compose project name (used for non-rolling stacks or legacy stacks without
+// the label). Rolling stacks whose compose project name starts with
+// "<project>-" are also matched.
+func (r *Reconciler) hasAnyContainersForApp(project string) bool {
+	// Check by konta.app label — present on well-labelled rolling stacks
+	cmd := exec.Command("docker", "ps", "-a",
+		"--filter", "label=konta.managed=true",
+		"--filter", fmt.Sprintf("label=konta.app=%s", project),
+		"--format", "{{.ID}}",
+	)
+	if output, err := cmd.Output(); err == nil && strings.TrimSpace(string(output)) != "" {
+		return true
+	}
+
+	// Check by exact compose project name (non-rolling)
+	cmd = exec.Command("docker", "ps", "-a",
+		"--filter", "label=konta.managed=true",
+		"--filter", fmt.Sprintf("label=com.docker.compose.project=%s", project),
+		"--format", "{{.ID}}",
+	)
+	if output, err := cmd.Output(); err == nil && strings.TrimSpace(string(output)) != "" {
+		return true
+	}
+
+	// Check rolling stacks whose compose project starts with "<project>-<hash>"
+	// by listing all stacks and checking the prefix (reuses listStacksForApp).
+	stacks, err := r.listStacksForApp(project)
+	if err == nil && len(stacks) > 0 {
+		return true
+	}
+
+	return false
 }
 
 // hasStoppedContainers checks if a project has any stopped containers
