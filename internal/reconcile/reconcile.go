@@ -22,14 +22,6 @@ type Reconciler struct {
 	changedProjects map[string]bool // Track which projects have changes
 }
 
-type stoppedLabelState int
-
-const (
-	stoppedLabelUnset stoppedLabelState = iota
-	stoppedLabelTrue
-	stoppedLabelFalse
-)
-
 // New creates a new reconciler
 func New(config *types.Config, repoDir string, dryRun bool) *Reconciler {
 	return &Reconciler{
@@ -426,32 +418,20 @@ func (r *Reconciler) getContainerNamesFromCompose(composePath string) ([]string,
 	return names, nil
 }
 
+// downProject removes an orphan project entirely (app was deleted from apps/).
+// Always performs full cleanup: containers, networks, volumes, and images.
+// konta.stopped label is irrelevant here — the app is gone from configuration.
 func (r *Reconciler) downProject(project string) error {
-	labelState, err := r.projectStoppedLabelState(project)
-	if err != nil {
-		return fmt.Errorf("failed to evaluate konta.stopped labels for project %s: %w", project, err)
-	}
+	logger.Info("Removing orphan project %s (full cleanup: containers, networks, volumes, images)", project)
 
-	if labelState == stoppedLabelTrue {
-		logger.Info("Project %s has konta.stopped=true, stopping containers only", project)
-		return r.stopProjectContainers(project)
-	}
-
-	args := []string{
-		"compose",
+	cmd := exec.Command(
+		"docker", "compose",
 		"-p", project,
 		"down",
 		"--remove-orphans",
-	}
-
-	if labelState == stoppedLabelUnset {
-		logger.Info("Project %s has no explicit konta.stopped label, enabling extra cleanup for volumes and local images", project)
-		args = append(args, "--volumes", "--rmi", "local")
-	} else {
-		logger.Debug("Project %s has explicit konta.stopped=false, skipping extra cleanup for volumes and images", project)
-	}
-
-	cmd := exec.Command("docker", args...)
+		"--volumes",
+		"--rmi", "all",
+	)
 
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
@@ -460,73 +440,6 @@ func (r *Reconciler) downProject(project string) error {
 		return fmt.Errorf("docker compose down failed: %w", err)
 	}
 
-	return nil
-}
-
-// projectStoppedLabelState inspects project containers and returns the explicit state of konta.stopped label.
-func (r *Reconciler) projectStoppedLabelState(project string) (stoppedLabelState, error) {
-	cmd := exec.Command(
-		"docker", "ps",
-		"-a",
-		"--filter", fmt.Sprintf("label=com.docker.compose.project=%s", project),
-		"--filter", "label=konta.managed=true",
-		"--format", "{{.Label \"konta.stopped\"}}",
-	)
-
-	output, err := cmd.Output()
-	if err != nil {
-		return stoppedLabelUnset, err
-	}
-
-	hasFalse := false
-	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
-		value := strings.TrimSpace(line)
-		if value == "true" {
-			return stoppedLabelTrue, nil
-		}
-		if value == "false" {
-			hasFalse = true
-		}
-	}
-
-	if hasFalse {
-		return stoppedLabelFalse, nil
-	}
-
-	return stoppedLabelUnset, nil
-}
-
-// stopProjectContainers stops all running containers of a Konta-managed compose project without removing them.
-func (r *Reconciler) stopProjectContainers(project string) error {
-	cmd := exec.Command(
-		"docker", "ps",
-		"--filter", fmt.Sprintf("label=com.docker.compose.project=%s", project),
-		"--filter", "label=konta.managed=true",
-		"--filter", "status=running",
-		"--format", "{{.ID}}",
-	)
-
-	output, err := cmd.Output()
-	if err != nil {
-		return fmt.Errorf("failed to list running containers for project %s: %w", project, err)
-	}
-
-	containerIDs := strings.Fields(string(output))
-	if len(containerIDs) == 0 {
-		logger.Debug("Project %s has no running containers to stop", project)
-		return nil
-	}
-
-	stopCmd := exec.Command("docker", "stop")
-	stopCmd.Args = append(stopCmd.Args, containerIDs...)
-	stopCmd.Stdout = os.Stderr
-	stopCmd.Stderr = os.Stderr
-
-	if err := stopCmd.Run(); err != nil {
-		return fmt.Errorf("failed to stop containers for project %s: %w", project, err)
-	}
-
-	logger.Info("Stopped %d containers for project %s (no removal)", len(containerIDs), project)
 	return nil
 }
 
