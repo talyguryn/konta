@@ -690,7 +690,7 @@ func (r *Reconciler) composeHasHealthcheck(composePath string) (bool, error) {
 
 func (r *Reconciler) waitForProjectHealthy(projectName string, timeoutSeconds int) error {
 	if timeoutSeconds <= 0 {
-		timeoutSeconds = 120
+		timeoutSeconds = 300
 	}
 
 	deadline := time.Now().Add(time.Duration(timeoutSeconds) * time.Second)
@@ -761,7 +761,7 @@ func (r *Reconciler) waitForProjectHealthyWithRetries(projectName string, timeou
 
 func (r *Reconciler) waitForProjectRunning(projectName string, timeoutSeconds int) error {
 	if timeoutSeconds <= 0 {
-		timeoutSeconds = 120
+		timeoutSeconds = 300
 	}
 
 	deadline := time.Now().Add(time.Duration(timeoutSeconds) * time.Second)

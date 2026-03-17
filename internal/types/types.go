@@ -24,7 +24,7 @@ type DeployConf struct {
 	Parallel          bool                  `yaml:"parallel,omitempty"`
 	DryRun            bool                  `yaml:"dry_run,omitempty"`
 	ProjectNameHashMode string              `yaml:"project_name_hash_mode,omitempty"` // rolling_only (default), all, none
-	RollingHealthTimeoutSeconds int         `yaml:"rolling_health_timeout_second,omitempty"` // default: 20
+	RollingHealthTimeoutSeconds int         `yaml:"rolling_health_timeout_second,omitempty"` // default: 300
 	RollingHealthRetries int                `yaml:"rolling_health_retries,omitempty"` // default: 1
 	GitHubDeployments GitHubDeploymentsConf `yaml:"github_deployments,omitempty"`
 	// RemoveOrphans is always enabled by default to keep disk space clean

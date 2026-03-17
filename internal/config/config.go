@@ -54,7 +54,7 @@ func Load() (*types.Config, error) {
 		},
 		Deploy: types.DeployConf{
 			ProjectNameHashMode: "rolling_only",
-			RollingHealthTimeoutSeconds: 120,
+			RollingHealthTimeoutSeconds: 300,
 			RollingHealthRetries: 1,
 			GitHubDeployments: types.GitHubDeploymentsConf{
 				Enable:      true,
@@ -83,7 +83,7 @@ func Load() (*types.Config, error) {
 	}
 
 	if config.Deploy.RollingHealthTimeoutSeconds <= 0 {
-		config.Deploy.RollingHealthTimeoutSeconds = 120
+		config.Deploy.RollingHealthTimeoutSeconds = 300
 	}
 
 	if config.Deploy.RollingHealthRetries <= 0 {
