@@ -1375,8 +1375,15 @@ func reconcileOnce(dryRun bool, version string, isFirstRun bool, forceFullRedepl
 		}
 	}
 
+	deploymentRepoDir := releaseDir
+	existingReleaseDir := filepath.Join(state.GetReleasesDir(), newCommit)
+	if info, statErr := os.Stat(existingReleaseDir); statErr == nil && info.IsDir() {
+		deploymentRepoDir = existingReleaseDir
+		logger.Info("Using existing release directory for reconciliation: %s", newCommit[:8])
+	}
+
 	// Create hook runner
-	hookRunner := hooks.New(releaseDir, cfg.Hooks.StartedAbs, cfg.Hooks.PreAbs, cfg.Hooks.SuccessAbs, cfg.Hooks.FailureAbs, cfg.Hooks.PostUpdateAbs)
+	hookRunner := hooks.New(deploymentRepoDir, cfg.Hooks.StartedAbs, cfg.Hooks.PreAbs, cfg.Hooks.SuccessAbs, cfg.Hooks.FailureAbs, cfg.Hooks.PostUpdateAbs)
 
 	// Run pre-hook
 	if err := hookRunner.RunPre(); err != nil {
@@ -1387,12 +1394,12 @@ func reconcileOnce(dryRun bool, version string, isFirstRun bool, forceFullRedepl
 	}
 
 	// Perform reconciliation
-	reconciler := reconcile.New(cfg, releaseDir, dryRun, newCommit)
+	reconciler := reconcile.New(cfg, deploymentRepoDir, dryRun, newCommit)
 
 	// Optionally ensure projects marked with konta.recreate=true are always reconciled.
 	// This is a manual override for projects that need guaranteed cleanup on each cycle.
 	if changedProjects != nil {
-		recreateProjects, err := findProjectsMarkedForRecreate(filepath.Join(releaseDir, cfg.Repository.Path))
+		recreateProjects, err := findProjectsMarkedForRecreate(filepath.Join(deploymentRepoDir, cfg.Repository.Path))
 		if err != nil {
 			logger.Debug("Failed to find konta.recreate projects: %v", err)
 		} else if len(recreateProjects) > 0 {

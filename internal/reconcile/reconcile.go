@@ -220,6 +220,22 @@ func (r *Reconciler) HealthCheck() ([]string, error) {
 			} else {
 				startedProjects = append(startedProjects, project)
 			}
+			continue
+		}
+
+		hasUnhealthyContainers, err := r.hasUnhealthyContainers(project)
+		if err != nil {
+			logger.Warn("Failed to check unhealthy containers for project %s: %v", project, err)
+			continue
+		}
+
+		if hasUnhealthyContainers {
+			logger.Warn("Project %s has unhealthy containers, running full reconcile", project)
+			if err := r.reconcileProject(project); err != nil {
+				logger.Warn("Failed to recover unhealthy project %s: %v", project, err)
+			} else {
+				startedProjects = append(startedProjects, project)
+			}
 		}
 	}
 
@@ -931,6 +947,49 @@ func (r *Reconciler) hasStoppedContainers(project string) (bool, error) {
 		parts := strings.Split(line, "|")
 		if len(parts) > 1 && parts[1] != "true" {
 			// Found a stopped container that should be running
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+func (r *Reconciler) hasUnhealthyContainers(project string) (bool, error) {
+	baseFilters := []string{"--filter", "label=konta.managed=true"}
+	if r.appHasLabeledStacks(project) {
+		baseFilters = append(baseFilters, "--filter", fmt.Sprintf("label=konta.app=%s", project))
+	} else {
+		baseFilters = append(baseFilters, "--filter", fmt.Sprintf("label=com.docker.compose.project=%s", project))
+	}
+
+	args := []string{"ps", "-a"}
+	args = append(args, baseFilters...)
+	args = append(args, "--format", "{{.Status}}|{{.Label \"konta.stopped\"}}")
+
+	cmd := exec.Command("docker", args...)
+	output, err := cmd.Output()
+	if err != nil {
+		return false, err
+	}
+
+	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+
+		parts := strings.SplitN(line, "|", 2)
+		if len(parts) != 2 {
+			continue
+		}
+
+		status := strings.ToLower(strings.TrimSpace(parts[0]))
+		stoppedLabel := strings.TrimSpace(parts[1])
+		if stoppedLabel == "true" {
+			continue
+		}
+
+		if strings.Contains(status, "(unhealthy)") {
 			return true, nil
 		}
 	}
