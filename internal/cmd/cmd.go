@@ -221,7 +221,9 @@ func Bootstrap(args []string) error {
 			Interval: interval,
 		},
 		Deploy: types.DeployConf{
-			Atomic: true,
+			ProjectNameHashMode: "rolling_only",
+			RollingHealthTimeoutSeconds: 20,
+			RollingHealthRetries: 1,
 			GitHubDeployments: types.GitHubDeploymentsConf{
 				Enable:      true,
 				Environment: "production",
@@ -330,7 +332,9 @@ func installInteractive() error {
 			Interval: interval,
 		},
 		Deploy: types.DeployConf{
-			Atomic: true,
+			ProjectNameHashMode: "rolling_only",
+			RollingHealthTimeoutSeconds: 20,
+			RollingHealthRetries: 1,
 			GitHubDeployments: types.GitHubDeploymentsConf{
 				Enable:      true,
 				Environment: "production",
@@ -1069,6 +1073,11 @@ func reconcileOnce(dryRun bool, version string) error {
 		logger.Debug("Failed to get current release commit from symlink, using state fallback: %v", currentReleaseErr)
 	}
 	stableRollbackCommit := strings.TrimSpace(lastSuccessfulCommit)
+	activeCommitForCleanup := stableRollbackCommit
+	if activeCommitForCleanup == "" {
+		activeCommitForCleanup = currentState.LastCommit
+	}
+	defer cleanupOldReleases(state.GetReleasesDir(), activeCommitForCleanup)
 
 	// Clone/update the repository
 	releaseDir := filepath.Join(state.GetReleasesDir(), "temp-"+time.Now().Format("20060102150405"))
@@ -1078,6 +1087,20 @@ func reconcileOnce(dryRun bool, version string) error {
 	if err != nil {
 		return err
 	}
+
+	defer func() {
+		if dryRun {
+			return
+		}
+		desiredProjects, desiredErr := listDesiredProjectsForStatePrune(filepath.Join(releaseDir, cfg.Repository.Path))
+		if desiredErr != nil {
+			logger.Warn("Failed to collect desired projects for state prune: %v", desiredErr)
+			return
+		}
+		if err := state.PruneProjects(desiredProjects); err != nil {
+			logger.Warn("Failed to prune stale project state: %v", err)
+		}
+	}()
 
 	// Check if there are changes
 	if newCommit == currentState.LastCommit {
@@ -1090,7 +1113,7 @@ func reconcileOnce(dryRun bool, version string) error {
 		// Even without changes, perform health check to ensure containers are running
 		logger.Info("Performing container health check")
 		if !dryRun {
-			reconciler := reconcile.New(cfg, releaseDir, dryRun)
+			reconciler := reconcile.New(cfg, releaseDir, dryRun, newCommit)
 			reconciler.SetChangedProjects(nil) // nil means check all projects
 			if _, err := reconciler.HealthCheck(); err != nil {
 				logger.Warn("Health check encountered issues: %v", err)
@@ -1141,7 +1164,7 @@ func reconcileOnce(dryRun bool, version string) error {
 		// Even with no project changes, we should clean up orphan containers
 		// that may have been moved out of the apps directory
 		if !dryRun {
-			reconciler := reconcile.New(cfg, releaseDir, dryRun)
+			reconciler := reconcile.New(cfg, releaseDir, dryRun, newCommit)
 			if err := reconciler.CleanupOrphans(); err != nil {
 				logger.Warn("Failed to cleanup orphans: %v", err)
 				// Don't fail on orphan cleanup, just warn
@@ -1158,7 +1181,7 @@ func reconcileOnce(dryRun bool, version string) error {
 				logger.Error("Failed to update state for no-change commit: %v", err)
 				return err
 			}
-			cleanupOldReleases(state.GetReleasesDir(), newCommit)
+			activeCommitForCleanup = newCommit
 			logger.Info("State updated to new commit (no app changes)")
 		} else {
 			logger.Info("[DRY-RUN] Would switch to commit: %s", newCommit[:8])
@@ -1304,7 +1327,7 @@ func reconcileOnce(dryRun bool, version string) error {
 	}
 
 	// Perform reconciliation
-	reconciler := reconcile.New(cfg, releaseDir, dryRun)
+	reconciler := reconcile.New(cfg, releaseDir, dryRun, newCommit)
 	reconciler.SetChangedProjects(changedProjects)
 	result, err := reconciler.Reconcile()
 	if err != nil {
@@ -1338,7 +1361,7 @@ func reconcileOnce(dryRun bool, version string) error {
 			reportGitHubFailure(fmt.Sprintf("Failed to update state: %v", err), rollbackNote, rollbackCompleted)
 			return err
 		}
-		cleanupOldReleases(state.GetReleasesDir(), newCommit)
+		activeCommitForCleanup = newCommit
 	} else {
 		logger.Info("[DRY-RUN] Would switch to commit: %s", newCommit[:8])
 	}
@@ -1568,7 +1591,7 @@ func rollbackToStable(cfg *types.Config, stableCommit string, changedProjects []
 
 	logger.Warn("Starting rollback to stable release: %s", stableCommit)
 
-	reconciler := reconcile.New(cfg, stableReleaseDir, false)
+	reconciler := reconcile.New(cfg, stableReleaseDir, false, stableCommit)
 	reconciler.SetChangedProjects(changedProjects)
 	result, err := reconciler.Reconcile()
 	if err != nil {
@@ -1595,6 +1618,12 @@ func rollbackToStable(cfg *types.Config, stableCommit string, changedProjects []
 
 // cleanupOldReleases removes old release directories to avoid unused data buildup
 func cleanupOldReleases(releasesDir string, currentCommit string) {
+	currentCommit = strings.TrimSpace(currentCommit)
+	if currentCommit == "" {
+		logger.Debug("Skipping release cleanup: current commit is empty")
+		return
+	}
+
 	entries, err := os.ReadDir(releasesDir)
 	if err != nil {
 		logger.Warn("Failed to read releases directory: %v", err)
@@ -1623,6 +1652,26 @@ func cleanupOldReleases(releasesDir string, currentCommit string) {
 			logger.Info("Removed old release: %s", name)
 		}
 	}
+}
+
+func listDesiredProjectsForStatePrune(appsDir string) ([]string, error) {
+	entries, err := os.ReadDir(appsDir)
+	if err != nil {
+		return nil, err
+	}
+
+	projects := make([]string, 0)
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		composePath := filepath.Join(appsDir, entry.Name(), "docker-compose.yml")
+		if _, err := os.Stat(composePath); err == nil {
+			projects = append(projects, entry.Name())
+		}
+	}
+
+	return projects, nil
 }
 
 // ManageDaemon manages the systemd service

@@ -21,9 +21,11 @@ type RepositoryConf struct {
 
 // DeployConf represents deployment configuration
 type DeployConf struct {
-	Atomic            bool                  `yaml:"atomic,omitempty"`
 	Parallel          bool                  `yaml:"parallel,omitempty"`
 	DryRun            bool                  `yaml:"dry_run,omitempty"`
+	ProjectNameHashMode string              `yaml:"project_name_hash_mode,omitempty"` // rolling_only (default), all, none
+	RollingHealthTimeoutSeconds int         `yaml:"rolling_health_timeout_second,omitempty"` // default: 20
+	RollingHealthRetries int                `yaml:"rolling_health_retries,omitempty"` // default: 1
 	GitHubDeployments GitHubDeploymentsConf `yaml:"github_deployments,omitempty"`
 	// RemoveOrphans is always enabled by default to keep disk space clean
 }
@@ -69,6 +71,8 @@ type State struct {
 type ProjectState struct {
 	LastCommit     string `json:"last_commit"`      // Last commit that affected this project
 	LastDeployTime string `json:"last_deploy_time"` // When this project was last deployed
+	ActiveStack    string `json:"active_stack,omitempty"` // Active docker compose project name
+	ActiveCommit   string `json:"active_commit,omitempty"` // Active commit for project stack
 }
 
 // ReconcileResult represents the result of a reconciliation operation

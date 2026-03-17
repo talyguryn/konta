@@ -142,6 +142,42 @@ func UpdateWithProjects(commit string, reconciledProjects []string) error {
 	return nil
 }
 
+// PruneProjects removes project state entries that are no longer present in desired apps.
+func PruneProjects(desiredProjects []string) error {
+	currentState, err := Load()
+	if err != nil {
+		return err
+	}
+
+	if len(currentState.Projects) == 0 {
+		return nil
+	}
+
+	allowed := make(map[string]bool, len(desiredProjects))
+	for _, project := range desiredProjects {
+		allowed[project] = true
+	}
+
+	removed := 0
+	for project := range currentState.Projects {
+		if !allowed[project] {
+			delete(currentState.Projects, project)
+			removed++
+		}
+	}
+
+	if removed == 0 {
+		return nil
+	}
+
+	if err := Save(currentState); err != nil {
+		return err
+	}
+
+	logger.Info("Pruned %d stale project state entrie(s)", removed)
+	return nil
+}
+
 // MarkAttempt stores information about the latest deployment attempt.
 func MarkAttempt(commit string, status string) error {
 	currentState, err := Load()

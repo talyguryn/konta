@@ -53,7 +53,9 @@ func Load() (*types.Config, error) {
 			Branch:   "main",
 		},
 		Deploy: types.DeployConf{
-			Atomic: true,
+			ProjectNameHashMode: "rolling_only",
+			RollingHealthTimeoutSeconds: 20,
+			RollingHealthRetries: 1,
 			GitHubDeployments: types.GitHubDeploymentsConf{
 				Enable:      true,
 				Environment: "production",
@@ -74,6 +76,18 @@ func Load() (*types.Config, error) {
 	}
 	if config.Repository.URL == "" {
 		return nil, fmt.Errorf("repository.url is required")
+	}
+
+	if strings.TrimSpace(config.Deploy.ProjectNameHashMode) == "" {
+		config.Deploy.ProjectNameHashMode = "rolling_only"
+	}
+
+	if config.Deploy.RollingHealthTimeoutSeconds <= 0 {
+		config.Deploy.RollingHealthTimeoutSeconds = 20
+	}
+
+	if config.Deploy.RollingHealthRetries <= 0 {
+		config.Deploy.RollingHealthRetries = 1
 	}
 
 	// Normalize repository path - ensure it points to 'apps' directory

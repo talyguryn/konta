@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/talyguryn/konta/internal/logger"
 	"github.com/talyguryn/konta/internal/types"
@@ -19,16 +20,18 @@ type Reconciler struct {
 	repoDir        string
 	dryRun         bool
 	appsDir        string
+	deployCommit   string
 	changedProjects map[string]bool // Track which projects have changes
 }
 
 // New creates a new reconciler
-func New(config *types.Config, repoDir string, dryRun bool) *Reconciler {
+func New(config *types.Config, repoDir string, dryRun bool, deployCommit string) *Reconciler {
 	return &Reconciler{
 		config:         config,
 		repoDir:        repoDir,
 		dryRun:         dryRun,
 		appsDir:        filepath.Join(repoDir, config.Repository.Path),
+		deployCommit:   strings.TrimSpace(deployCommit),
 		changedProjects: make(map[string]bool),
 	}
 }
@@ -268,8 +271,9 @@ func (r *Reconciler) getDesiredProjects() ([]string, error) {
 }
 
 func (r *Reconciler) getRunningProjects() ([]string, error) {
-	// Get all Konta-managed projects (including stopped containers)
-	cmd := exec.Command("docker", "ps", "-a", "--filter", "label=konta.managed=true", "--format", "{{.Label \"com.docker.compose.project\"}}")
+	// Get all Konta-managed projects (including stopped containers).
+	// For rolling stacks prefer base app label (konta.app) so desired-vs-running comparison remains stable.
+	cmd := exec.Command("docker", "ps", "-a", "--filter", "label=konta.managed=true", "--format", "{{.Label \"konta.app\"}}|{{.Label \"com.docker.compose.project\"}}")
 	output, err := cmd.Output()
 	if err != nil {
 		logger.Warn("Failed to get running projects: %v", err)
@@ -280,9 +284,25 @@ func (r *Reconciler) getRunningProjects() ([]string, error) {
 	seen := make(map[string]bool)
 	for _, line := range strings.Split(string(output), "\n") {
 		line = strings.TrimSpace(line)
-		if line != "" && !seen[line] {
-			seen[line] = true
-			projects = append(projects, line)
+		if line == "" {
+			continue
+		}
+
+		parts := strings.SplitN(line, "|", 2)
+		if len(parts) != 2 {
+			continue
+		}
+
+		appName := strings.TrimSpace(parts[0])
+		composeProject := strings.TrimSpace(parts[1])
+		projectKey := composeProject
+		if appName != "" {
+			projectKey = appName
+		}
+
+		if projectKey != "" && !seen[projectKey] {
+			seen[projectKey] = true
+			projects = append(projects, projectKey)
 		}
 	}
 
@@ -297,14 +317,33 @@ func (r *Reconciler) reconcileProject(project string) error {
 
 	logger.Info("Reconciling project: %s", project)
 
+	rollingEnabled, err := r.composeHasLabel(composePath, "konta.rolling=true")
+	if err != nil {
+		return fmt.Errorf("failed to inspect rolling label for project %s: %w", project, err)
+	}
+
+	useProjectHashName := r.shouldUseHashInProjectName(rollingEnabled)
+	targetProjectName := project
+	if useProjectHashName {
+		shortCommit := r.shortDeployCommit()
+		if shortCommit == "" {
+			return fmt.Errorf("deploy commit is required when hash-based project naming is enabled")
+		}
+		targetProjectName = fmt.Sprintf("%s-%s", project, shortCommit)
+	}
+
+	if err := r.handleProjectModeMigration(project, targetProjectName, rollingEnabled); err != nil {
+		return err
+	}
+
 	if r.dryRun {
-		logger.Info("[DRY-RUN] Would run docker compose for %s", project)
+		logger.Info("[DRY-RUN] Would run docker compose for %s (target stack: %s)", project, targetProjectName)
 		return nil
 	}
 
 	cmd := exec.Command(
 		"docker", "compose",
-		"-p", project,
+		"-p", targetProjectName,
 		"-f", composePath,
 		"up", "-d",
 		"--remove-orphans",
@@ -314,8 +353,8 @@ func (r *Reconciler) reconcileProject(project string) error {
 	var stderr bytes.Buffer
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = &stderr
-	// Add Konta management label to all containers in this project
-	cmd.Env = append(os.Environ(), "COMPOSE_PROJECT_LABELS=konta.managed=true")
+	// Add Konta management labels to all containers in this stack
+	cmd.Env = append(os.Environ(), fmt.Sprintf("COMPOSE_PROJECT_LABELS=konta.managed=true,konta.app=%s,konta.commit=%s", project, r.shortDeployCommit()))
 
 	if err := cmd.Run(); err != nil {
 		stderrStr := stderr.String()
@@ -333,7 +372,7 @@ func (r *Reconciler) reconcileProject(project string) error {
 			// Retry docker compose up
 			cmd = exec.Command(
 				"docker", "compose",
-				"-p", project,
+				"-p", targetProjectName,
 				"-f", composePath,
 				"up", "-d",
 				"--remove-orphans",
@@ -341,7 +380,7 @@ func (r *Reconciler) reconcileProject(project string) error {
 			cmd.Dir = filepath.Join(r.appsDir, project)
 			cmd.Stdout = os.Stderr
 			cmd.Stderr = os.Stderr
-			cmd.Env = append(os.Environ(), "COMPOSE_PROJECT_LABELS=konta.managed=true")
+			cmd.Env = append(os.Environ(), fmt.Sprintf("COMPOSE_PROJECT_LABELS=konta.managed=true,konta.app=%s,konta.commit=%s", project, r.shortDeployCommit()))
 
 			if retryErr := cmd.Run(); retryErr != nil {
 				return fmt.Errorf("docker compose failed after cleanup retry: %w (original: %v)", retryErr, stderrStr)
@@ -354,10 +393,32 @@ func (r *Reconciler) reconcileProject(project string) error {
 		}
 	}
 
+	if rollingEnabled {
+		hasHealthcheck, err := r.composeHasHealthcheck(composePath)
+		if err != nil {
+			_ = r.downComposeProject(targetProjectName, false)
+			return fmt.Errorf("failed to inspect healthcheck for rolling project %s: %w", project, err)
+		}
+
+		if !hasHealthcheck {
+			_ = r.downComposeProject(targetProjectName, false)
+			return fmt.Errorf("rolling deployment requires healthcheck in compose for project %s", project)
+		}
+
+		if err := r.waitForProjectHealthyWithRetries(targetProjectName, r.config.Deploy.RollingHealthTimeoutSeconds, r.config.Deploy.RollingHealthRetries); err != nil {
+			_ = r.downComposeProject(targetProjectName, false)
+			return fmt.Errorf("rolling deployment healthcheck failed for project %s: %w", project, err)
+		}
+	}
+
+	if err := r.cleanupOldStacksForApp(project, targetProjectName); err != nil {
+		logger.Warn("Failed to cleanup old stacks for project %s: %v", project, err)
+	}
+
 	// After successful compose up, immediately stop containers marked with konta.stopped=true
 	r.stopContainersMarkedAsStopped(project)
 
-	logger.Info("Project %s reconciled successfully", project)
+	logger.Info("Project %s reconciled successfully (stack: %s)", project, targetProjectName)
 	return nil
 }
 
@@ -422,25 +483,245 @@ func (r *Reconciler) getContainerNamesFromCompose(composePath string) ([]string,
 // Always performs full cleanup: containers, networks, volumes, and images.
 // konta.stopped label is irrelevant here — the app is gone from configuration.
 func (r *Reconciler) downProject(project string) error {
-	logger.Info("Removing orphan project %s (full cleanup: containers, networks, volumes, images)", project)
+	stacks, err := r.listStacksForApp(project)
+	if err != nil {
+		return fmt.Errorf("failed to list stacks for orphan project %s: %w", project, err)
+	}
 
-	cmd := exec.Command(
-		"docker", "compose",
-		"-p", project,
-		"down",
-		"--remove-orphans",
-		"--volumes",
-		"--rmi", "all",
-	)
+	if len(stacks) == 0 {
+		stacks = []string{project}
+	}
 
+	for _, stack := range stacks {
+		logger.Info("Removing orphan stack %s for app %s (full cleanup: containers, networks, volumes, images)", stack, project)
+		if err := r.downComposeProject(stack, true); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (r *Reconciler) handleProjectModeMigration(baseProject string, targetProjectName string, rollingEnabled bool) error {
+	stacks, err := r.listStacksForApp(baseProject)
+	if err != nil {
+		return fmt.Errorf("failed to list existing stacks for project %s: %w", baseProject, err)
+	}
+
+	hasLegacy := false
+	hasHashed := false
+	for _, stack := range stacks {
+		if stack == baseProject {
+			hasLegacy = true
+		} else if strings.HasPrefix(stack, baseProject+"-") {
+			hasHashed = true
+		}
+	}
+
+	if rollingEnabled && hasLegacy && baseProject != targetProjectName {
+		logger.Info("Migrating project %s from non-rolling to rolling mode via restart", baseProject)
+		if r.dryRun {
+			return nil
+		}
+		if err := r.downComposeProject(baseProject, false); err != nil {
+			return fmt.Errorf("failed migration down for project %s: %w", baseProject, err)
+		}
+	}
+
+	if !rollingEnabled && hasHashed {
+		logger.Info("Migrating project %s from rolling to non-rolling mode via restart", baseProject)
+		if r.dryRun {
+			return nil
+		}
+		for _, stack := range stacks {
+			if stack != baseProject {
+				if err := r.downComposeProject(stack, false); err != nil {
+					return fmt.Errorf("failed to stop rolling stack %s during migration: %w", stack, err)
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+func (r *Reconciler) cleanupOldStacksForApp(baseProject string, keepStack string) error {
+	stacks, err := r.listStacksForApp(baseProject)
+	if err != nil {
+		return err
+	}
+
+	for _, stack := range stacks {
+		if stack == keepStack {
+			continue
+		}
+		if err := r.downComposeProject(stack, false); err != nil {
+			return fmt.Errorf("failed to cleanup old stack %s: %w", stack, err)
+		}
+	}
+
+	return nil
+}
+
+func (r *Reconciler) listStacksForApp(baseProject string) ([]string, error) {
+	cmd := exec.Command("docker", "ps", "-a", "--filter", "label=konta.managed=true", "--format", "{{.Label \"konta.app\"}}|{{.Label \"com.docker.compose.project\"}}")
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+
+	seen := make(map[string]bool)
+	stacks := make([]string, 0)
+	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		parts := strings.SplitN(line, "|", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		appName := strings.TrimSpace(parts[0])
+		composeProject := strings.TrimSpace(parts[1])
+		if composeProject == "" {
+			continue
+		}
+
+		if appName == baseProject || composeProject == baseProject || strings.HasPrefix(composeProject, baseProject+"-") {
+			if !seen[composeProject] {
+				seen[composeProject] = true
+				stacks = append(stacks, composeProject)
+			}
+		}
+	}
+
+	sort.Strings(stacks)
+	return stacks, nil
+}
+
+func (r *Reconciler) downComposeProject(projectName string, fullCleanup bool) error {
+	args := []string{"compose", "-p", projectName, "down", "--remove-orphans"}
+	if fullCleanup {
+		args = append(args, "--volumes", "--rmi", "all")
+	}
+
+	cmd := exec.Command("docker", args...)
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("docker compose down failed: %w", err)
+		return fmt.Errorf("docker compose down failed for %s: %w", projectName, err)
 	}
 
 	return nil
+}
+
+func (r *Reconciler) composeHasLabel(composePath string, label string) (bool, error) {
+	data, err := os.ReadFile(composePath)
+	if err != nil {
+		return false, err
+	}
+	content := strings.ToLower(string(data))
+	return strings.Contains(content, strings.ToLower(label)), nil
+}
+
+func (r *Reconciler) composeHasHealthcheck(composePath string) (bool, error) {
+	data, err := os.ReadFile(composePath)
+	if err != nil {
+		return false, err
+	}
+	content := strings.ToLower(string(data))
+	return strings.Contains(content, "healthcheck:"), nil
+}
+
+func (r *Reconciler) waitForProjectHealthy(projectName string, timeoutSeconds int) error {
+	if timeoutSeconds <= 0 {
+		timeoutSeconds = 120
+	}
+
+	deadline := time.Now().Add(time.Duration(timeoutSeconds) * time.Second)
+	for time.Now().Before(deadline) {
+		cmd := exec.Command("docker", "ps", "-a", "--filter", fmt.Sprintf("label=com.docker.compose.project=%s", projectName), "--format", "{{.State}}|{{.Status}}")
+		output, err := cmd.Output()
+		if err != nil {
+			return err
+		}
+
+		lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+		allHealthy := true
+		hasContainers := false
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			hasContainers = true
+			parts := strings.SplitN(line, "|", 2)
+			if len(parts) != 2 {
+				allHealthy = false
+				break
+			}
+			state := strings.TrimSpace(parts[0])
+			status := strings.ToLower(strings.TrimSpace(parts[1]))
+			if state != "running" || !strings.Contains(status, "(healthy)") {
+				allHealthy = false
+				break
+			}
+		}
+
+		if hasContainers && allHealthy {
+			return nil
+		}
+
+		time.Sleep(2 * time.Second)
+	}
+
+	return fmt.Errorf("timed out waiting for healthy containers in stack %s", projectName)
+}
+
+func (r *Reconciler) waitForProjectHealthyWithRetries(projectName string, timeoutSeconds int, retries int) error {
+	if retries <= 0 {
+		retries = 1
+	}
+
+	var lastErr error
+	for attempt := 1; attempt <= retries; attempt++ {
+		if attempt > 1 {
+			logger.Warn("Retrying health check for stack %s (%d/%d)", projectName, attempt, retries)
+		}
+
+		if err := r.waitForProjectHealthy(projectName, timeoutSeconds); err != nil {
+			lastErr = err
+			continue
+		}
+
+		return nil
+	}
+
+	if lastErr != nil {
+		return fmt.Errorf("all %d healthcheck attempt(s) failed: %w", retries, lastErr)
+	}
+
+	return fmt.Errorf("all %d healthcheck attempt(s) failed", retries)
+}
+
+func (r *Reconciler) shortDeployCommit() string {
+	commit := strings.TrimSpace(r.deployCommit)
+	if len(commit) > 8 {
+		return commit[:8]
+	}
+	return commit
+}
+
+func (r *Reconciler) shouldUseHashInProjectName(rollingEnabled bool) bool {
+	mode := strings.ToLower(strings.TrimSpace(r.config.Deploy.ProjectNameHashMode))
+	switch mode {
+	case "all":
+		return true
+	case "none":
+		return false
+	default:
+		return rollingEnabled
+	}
 }
 
 // hasStoppedContainers checks if a project has any stopped containers
@@ -454,14 +735,21 @@ func (r *Reconciler) hasStoppedContainers(project string) (bool, error) {
 	}
 
 	// First, handle containers marked with konta.stopped=true - stop them if running
-	stopCmd := exec.Command(
-		"docker", "ps",
-		"--filter", fmt.Sprintf("label=com.docker.compose.project=%s", project),
-		"--filter", "label=konta.managed=true",
+	baseFilters := []string{"--filter", "label=konta.managed=true"}
+	if r.appHasLabeledStacks(project) {
+		baseFilters = append(baseFilters, "--filter", fmt.Sprintf("label=konta.app=%s", project))
+	} else {
+		baseFilters = append(baseFilters, "--filter", fmt.Sprintf("label=com.docker.compose.project=%s", project))
+	}
+
+	stopArgs := []string{"ps"}
+	stopArgs = append(stopArgs, baseFilters...)
+	stopArgs = append(stopArgs,
 		"--filter", "label=konta.stopped=true",
 		"--filter", "status=running",
 		"--format", "{{.ID}}",
 	)
+	stopCmd := exec.Command("docker", stopArgs...)
 
 	output, err := stopCmd.Output()
 	if err == nil && len(strings.TrimSpace(string(output))) > 0 {
@@ -481,14 +769,13 @@ func (r *Reconciler) hasStoppedContainers(project string) (bool, error) {
 	}
 
 	// Check for stopped containers that should be running (excluding konta.stopped=true)
-	checkCmd := exec.Command(
-		"docker", "ps",
-		"-a",
-		"--filter", fmt.Sprintf("label=com.docker.compose.project=%s", project),
-		"--filter", "label=konta.managed=true",
+	checkArgs := []string{"ps", "-a"}
+	checkArgs = append(checkArgs, baseFilters...)
+	checkArgs = append(checkArgs,
 		"--filter", "status=exited",
 		"--format", "{{.ID}}|{{.Label \"konta.stopped\"}}",
 	)
+	checkCmd := exec.Command("docker", checkArgs...)
 
 	output, err = checkCmd.Output()
 	if err != nil {
@@ -514,6 +801,36 @@ func (r *Reconciler) hasStoppedContainers(project string) (bool, error) {
 func (r *Reconciler) startProject(project string) error {
 	composePath := filepath.Join(r.appsDir, project, "docker-compose.yml")
 
+	if r.appHasLabeledStacks(project) {
+		startCmd := exec.Command(
+			"docker", "ps",
+			"-a",
+			"--filter", "label=konta.managed=true",
+			"--filter", fmt.Sprintf("label=konta.app=%s", project),
+			"--filter", "status=exited",
+			"--format", "{{.ID}}",
+		)
+		output, err := startCmd.Output()
+		if err == nil {
+			containerIDs := strings.Fields(string(output))
+			if len(containerIDs) > 0 {
+				if r.dryRun {
+					logger.Info("[DRY-RUN] Would start %d stopped container(s) for rolling app %s", len(containerIDs), project)
+					return nil
+				}
+
+				cmd := exec.Command("docker", "start")
+				cmd.Args = append(cmd.Args, containerIDs...)
+				cmd.Stdout = os.Stderr
+				cmd.Stderr = os.Stderr
+				if err := cmd.Run(); err == nil {
+					logger.Info("Project %s started successfully", project)
+					return nil
+				}
+			}
+		}
+	}
+
 	if r.dryRun {
 		logger.Info("[DRY-RUN] Would start containers for project %s", project)
 		return nil
@@ -530,8 +847,8 @@ func (r *Reconciler) startProject(project string) error {
 	cmd.Dir = filepath.Join(r.appsDir, project)
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
-	// Ensure konta management label is set
-	cmd.Env = append(os.Environ(), "COMPOSE_PROJECT_LABELS=konta.managed=true")
+	// Ensure konta management labels are set
+	cmd.Env = append(os.Environ(), fmt.Sprintf("COMPOSE_PROJECT_LABELS=konta.managed=true,konta.app=%s,konta.commit=%s", project, r.shortDeployCommit()))
 
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("failed to start project %s: %w", project, err)
@@ -564,14 +881,19 @@ func (r *Reconciler) shouldProjectBeStopped(project string) (bool, error) {
 
 // stopContainersMarkedAsStopped stops any running containers marked with konta.stopped=true
 func (r *Reconciler) stopContainersMarkedAsStopped(project string) {
-	stopCmd := exec.Command(
-		"docker", "ps",
-		"--filter", fmt.Sprintf("label=com.docker.compose.project=%s", project),
-		"--filter", "label=konta.managed=true",
+	args := []string{"ps", "--filter", "label=konta.managed=true"}
+	if r.appHasLabeledStacks(project) {
+		args = append(args, "--filter", fmt.Sprintf("label=konta.app=%s", project))
+	} else {
+		args = append(args, "--filter", fmt.Sprintf("label=com.docker.compose.project=%s", project))
+	}
+	args = append(args,
 		"--filter", "label=konta.stopped=true",
 		"--filter", "status=running",
 		"--format", "{{.ID}}",
 	)
+
+	stopCmd := exec.Command("docker", args...)
 
 	output, err := stopCmd.Output()
 	if err == nil && len(strings.TrimSpace(string(output))) > 0 {
@@ -589,6 +911,22 @@ func (r *Reconciler) stopContainersMarkedAsStopped(project string) {
 			}
 		}
 	}
+}
+
+func (r *Reconciler) appHasLabeledStacks(project string) bool {
+	cmd := exec.Command(
+		"docker", "ps", "-a",
+		"--filter", "label=konta.managed=true",
+		"--filter", fmt.Sprintf("label=konta.app=%s", project),
+		"--format", "{{.ID}}",
+	)
+
+	output, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+
+	return strings.TrimSpace(string(output)) != ""
 }
 
 // stopProject stops all containers for a project

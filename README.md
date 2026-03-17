@@ -295,12 +295,21 @@ repository:
   path: vps0/apps
   interval: 60
 
-# When atomic: true, Konta implements atomic/zero-downtime deployments using symlink-based switching. Instead of applying changes directly.
+# project_name_hash_mode controls compose project naming strategy:
+# - rolling_only (default): add commit hash to project name only for apps with konta.rolling=true
+# - all: add commit hash to all project names
+# - none: never add commit hash to project names
+# rolling_health_timeout_second is used for rolling apps (konta.rolling=true)
+# to wait until all containers in the new stack become healthy.
+# rolling_health_retries sets how many healthcheck attempts Konta does
+# before marking rolling deploy as failed.
 # github_deployments enables built-in GitHub Deployment statuses, commit statuses,
 # and failure comments on the failed commit with reason + compare link.
 # Uses repository.url + repository.token. The environment defaults to production.
 deploy:
-  atomic: true
+  project_name_hash_mode: rolling_only
+  rolling_health_timeout_second: 20
+  rolling_health_retries: 1
   github_deployments:
     enable: true
     environment: production
