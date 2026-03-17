@@ -1354,11 +1354,12 @@ func reconcileOnce(dryRun bool, version string, isFirstRun bool) error {
 	// Perform reconciliation
 	reconciler := reconcile.New(cfg, releaseDir, dryRun, newCommit)
 
-	// Ensure projects marked with konta.recreate=true are always reconciled
+	// Optionally ensure projects marked with konta.recreate=true are always reconciled.
+	// This is a manual override for projects that need guaranteed cleanup on each cycle.
 	if changedProjects != nil {
 		recreateProjects, err := findProjectsMarkedForRecreate(filepath.Join(releaseDir, cfg.Repository.Path))
 		if err != nil {
-			logger.Warn("Failed to find konta.recreate projects: %v", err)
+			logger.Debug("Failed to find konta.recreate projects: %v", err)
 		} else if len(recreateProjects) > 0 {
 			for _, project := range recreateProjects {
 				if !contains(changedProjects, project) {
@@ -1366,7 +1367,7 @@ func reconcileOnce(dryRun bool, version string, isFirstRun bool) error {
 				}
 			}
 			changedProjects = uniqueSortedProjects(changedProjects)
-			logger.Info("Added %d konta.recreate project(s) to reconcile list: %v", len(recreateProjects), recreateProjects)
+			logger.Debug("Added %d konta.recreate project(s) to reconcile list: %v", len(recreateProjects), recreateProjects)
 		}
 	}
 
@@ -1749,6 +1750,7 @@ func uniqueSortedProjects(projects []string) []string {
 
 // cleanupOldReleases removes old release directories to avoid unused data buildup.
 // keepCommits lists all commit SHAs (and temp dir names) that must be preserved.
+// Additionally, any release directory referenced by a konta.managed container bind-mount is preserved.
 func cleanupOldReleases(releasesDir string, keepCommits ...string) {
 	keep := make(map[string]bool)
 	for _, c := range keepCommits {
@@ -1757,8 +1759,19 @@ func cleanupOldReleases(releasesDir string, keepCommits ...string) {
 			keep[c] = true
 		}
 	}
+
+	// Add any release directories currently mounted by konta.managed containers
+	mountedReleaseDirs, err := mountedReleaseDirsInUse(releasesDir)
+	if err != nil {
+		logger.Warn("Failed to resolve mounted release dirs in GC: %v (skipping cleanup for safety)", err)
+		return // Fail-safe: skip cleanup if we can't safely determine what's in use
+	}
+	for releaseDirName := range mountedReleaseDirs {
+		keep[releaseDirName] = true
+	}
+
 	if len(keep) == 0 {
-		logger.Debug("Skipping release cleanup: no commits to keep specified")
+		logger.Debug("Skipping release cleanup: no commits to keep specified and no mounted release dirs detected")
 		return
 	}
 
@@ -1790,6 +1803,81 @@ func cleanupOldReleases(releasesDir string, keepCommits ...string) {
 			logger.Info("Removed old release: %s", name)
 		}
 	}
+}
+
+// mountedReleaseDirsInUse returns a set of release directory names (commit hashes)
+// that are currently referenced by bind-mounts in konta.managed containers.
+// This ensures that containers which still read files from old releases will have
+// those releases preserved by GC.
+func mountedReleaseDirsInUse(releasesDir string) (map[string]bool, error) {
+	kept := make(map[string]bool)
+
+	listCmd := exec.Command("docker", "ps", "-aq", "--filter", "label=konta.managed=true")
+	listOutput, err := listCmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("docker ps failed: %w", err)
+	}
+
+	containerIDs := strings.Fields(strings.TrimSpace(string(listOutput)))
+	if len(containerIDs) == 0 {
+		return kept, nil
+	}
+
+	type inspectMount struct {
+		Type   string `json:"Type"`
+		Source string `json:"Source"`
+	}
+	type inspectContainer struct {
+		Mounts []inspectMount `json:"Mounts"`
+	}
+
+	inspectArgs := append([]string{"inspect"}, containerIDs...)
+	inspectCmd := exec.Command("docker", inspectArgs...)
+	inspectOutput, err := inspectCmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("docker inspect failed: %w", err)
+	}
+
+	containers := make([]inspectContainer, 0)
+	if err := json.Unmarshal(inspectOutput, &containers); err != nil {
+		return nil, fmt.Errorf("failed to parse docker inspect output: %w", err)
+	}
+
+	cleanReleasesDir := filepath.Clean(releasesDir)
+	for _, container := range containers {
+		for _, mount := range container.Mounts {
+			if strings.TrimSpace(mount.Type) != "bind" {
+				continue
+			}
+
+			source := filepath.Clean(strings.TrimSpace(mount.Source))
+			if source == "" {
+				continue
+			}
+
+			relToReleases, relErr := filepath.Rel(cleanReleasesDir, source)
+			if relErr != nil {
+				continue
+			}
+
+			relToReleases = filepath.ToSlash(relToReleases)
+			if relToReleases == "." || strings.HasPrefix(relToReleases, "../") {
+				continue
+			}
+
+			parts := strings.Split(relToReleases, "/")
+			if len(parts) == 0 {
+				continue
+			}
+
+			releaseDirName := strings.TrimSpace(parts[0])
+			if releaseDirName != "" {
+				kept[releaseDirName] = true
+			}
+		}
+	}
+
+	return kept, nil
 }
 
 // detectChangedProjectsBySnapshot compares app project directories between the
@@ -2127,7 +2215,8 @@ func daemonStop(serviceName string) error {
 	return nil
 }
 
-// findProjectsMarkedForRecreate scans apps directory and returns projects that have konta.recreate=true label
+// findProjectsMarkedForRecreate scans apps directory and returns projects that have konta.recreate=true label.
+// This is an optional feature for projects that require forced recreation on every deployment cycle.
 func findProjectsMarkedForRecreate(appsDir string) ([]string, error) {
 	entries, err := os.ReadDir(appsDir)
 	if err != nil {

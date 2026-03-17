@@ -154,11 +154,11 @@ func reconcileOnceFetch(dryRun bool, version string) error {
 func reconcileWithPersistentRepo(cfg *types.Config, repoDir string, deployCommit string, changedProjects []string, dryRun bool) error {
 	reconciler := reconcile.New(cfg, repoDir, dryRun, deployCommit)
 
-	// Ensure projects marked with konta.recreate=true are always reconciled
+	// Optionally ensure projects marked with konta.recreate=true are always reconciled
 	if changedProjects != nil {
 		recreateProjects, err := findProjectsMarkedForRecreate(filepath.Join(repoDir, cfg.Repository.Path))
 		if err != nil {
-			logger.Warn("Failed to find konta.recreate projects: %v", err)
+			logger.Debug("Failed to find konta.recreate projects: %v", err)
 		} else if len(recreateProjects) > 0 {
 			for _, project := range recreateProjects {
 				if !contains(changedProjects, project) {
@@ -166,7 +166,7 @@ func reconcileWithPersistentRepo(cfg *types.Config, repoDir string, deployCommit
 				}
 			}
 			changedProjects = uniqueSortedProjects(changedProjects)
-			logger.Info("Added %d konta.recreate project(s) to reconcile list: %v", len(recreateProjects), recreateProjects)
+			logger.Debug("Added %d konta.recreate project(s) to reconcile list: %v", len(recreateProjects), recreateProjects)
 		}
 	}
 
