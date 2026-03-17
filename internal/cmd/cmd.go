@@ -956,7 +956,7 @@ func Run(dryRun bool, watch bool, version string) error {
 	}
 
 	// Execute reconciliation once
-	if err := reconcileOnce(dryRun, version); err != nil && !watch {
+	if err := reconcileOnce(dryRun, version, true); err != nil && !watch {
 		// Only return error if not in watch mode
 		// In watch mode, we log error and continue
 		return err
@@ -1009,7 +1009,7 @@ func Run(dryRun bool, watch bool, version string) error {
 				_ = CheckForUpdates(version, cfg.KontaUpdates)
 			}
 
-			if err := reconcileOnce(false, version); err != nil {
+			if err := reconcileOnce(false, version, false); err != nil {
 				logger.Error("Deployment error: %v", err)
 				// Continue on error, don't exit
 			}
@@ -1044,7 +1044,7 @@ func Run(dryRun bool, watch bool, version string) error {
 }
 
 // reconcileOnce performs a single reconciliation cycle
-func reconcileOnce(dryRun bool, version string) error {
+func reconcileOnce(dryRun bool, version string, isFirstRun bool) error {
 	l, err := lock.Acquire()
 	if err != nil {
 		return err
@@ -1142,7 +1142,7 @@ func reconcileOnce(dryRun bool, version string) error {
 	}
 	logger.Info("New commit detected: %s -> %s", lastCommitStr, newCommit[:8])
 
-	if !dryRun && strings.TrimSpace(currentState.LastAttemptedCommit) == newCommit && currentState.LastAttemptStatus == "failure" {
+	if !dryRun && !isFirstRun && strings.TrimSpace(currentState.LastAttemptedCommit) == newCommit && currentState.LastAttemptStatus == "failure" {
 		logger.Warn("Skipping automatic redeploy for previously failed commit %s", newCommit[:8])
 		return nil
 	}
