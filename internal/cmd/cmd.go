@@ -1182,6 +1182,7 @@ func reconcileOnce(dryRun bool, version string) error {
 				logger.Error("Failed to update state for no-change commit: %v", err)
 				return err
 			}
+			reportNoProjectChangesGitHubSuccess(cfg, lastSuccessfulCommit, newCommit)
 			activeCommitForCleanup = newCommit
 			logger.Info("State updated to new commit (no app changes)")
 		} else {
@@ -1536,6 +1537,50 @@ func buildSuccessComment(newCommit string, previousCommit string, compareURL str
 	}
 
 	return strings.Join(lines, "\n")
+}
+
+func reportNoProjectChangesGitHubSuccess(cfg *types.Config, previousCommit string, newCommit string) {
+	if cfg == nil || !cfg.Deploy.GitHubDeployments.Enable {
+		return
+	}
+
+	githubEnvironment := strings.TrimSpace(cfg.Deploy.GitHubDeployments.Environment)
+	if githubEnvironment == "" {
+		githubEnvironment = "production"
+	}
+
+	ghDeployClient, err := githubdeploy.New(cfg.Repository.URL, cfg.Repository.Token)
+	if err != nil {
+		logger.Warn("GitHub deployment status disabled: %v", err)
+		return
+	}
+
+	compareURL := ghDeployClient.CompareURL(previousCommit, newCommit)
+	if err := ghDeployClient.CreateCommitStatus(context.Background(), newCommit, "pending", "Konta deployment in progress", compareURL); err != nil {
+		logger.Warn("Failed to create GitHub commit status (pending): %v", err)
+	}
+
+	deploymentID, err := ghDeployClient.CreateDeploymentAndMarkInProgress(context.Background(), newCommit, githubEnvironment)
+	if err != nil {
+		logger.Warn("Failed to create GitHub deployment status: %v", err)
+		deploymentID = 0
+	}
+
+	if deploymentID != 0 {
+		if err := ghDeployClient.CreateDeploymentStatus(context.Background(), deploymentID, "success", "Konta deployment succeeded (no app changes)"); err != nil {
+			logger.Warn("Failed to report GitHub deployment success status: %v", err)
+		}
+	}
+
+	if err := ghDeployClient.CreateCommitStatus(context.Background(), newCommit, "success", "Konta deployment succeeded (no app changes)", compareURL); err != nil {
+		logger.Warn("Failed to report GitHub commit status (success): %v", err)
+	}
+
+	result := &types.ReconcileResult{}
+	successComment := buildSuccessComment(newCommit, previousCommit, compareURL, result)
+	if err := ghDeployClient.CreateCommitComment(context.Background(), newCommit, successComment); err != nil {
+		logger.Warn("Failed to publish GitHub success comment: %v", err)
+	}
 }
 
 // atomicSwitch performs atomic switch to new release
