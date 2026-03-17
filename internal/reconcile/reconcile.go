@@ -135,9 +135,11 @@ func (r *Reconciler) Reconcile() (*types.ReconcileResult, error) {
 	}
 
 	// Remove orphan projects (only Konta-managed ones with konta.managed=true label)
-	// We only remove projects that Konta explicitly manages, never other projects
+	// We only remove projects that Konta explicitly manages, never other projects.
+	// Rolling stacks (<app>-<hash>) that belong to a desired app are NOT orphans —
+	// they are cleaned up by cleanupOldStacksForApp during the next reconcile.
 	for _, project := range running {
-		if !contains(desired, project) {
+		if !isDesiredOrRollingStack(project, desired) {
 			logger.Info("Removing orphan Konta-managed project: %s", project)
 			if !r.dryRun {
 				if err := r.downProject(project); err != nil {
@@ -190,13 +192,14 @@ func (r *Reconciler) HealthCheck() ([]string, error) {
 	}
 
 	// Remove orphan projects (only Konta-managed ones with konta.managed=true label)
-	// This ensures orphans are cleaned up even when no code changes are detected
+	// This ensures orphans are cleaned up even when no code changes are detected.
+	// Rolling stacks (<app>-<hash>) that belong to a desired app are NOT orphans.
 	running, err := r.getRunningProjects()
 	if err != nil {
 		logger.Warn("Failed to get running projects: %v", err)
 	} else {
 		for _, project := range running {
-			if !contains(desired, project) {
+			if !isDesiredOrRollingStack(project, desired) {
 				logger.Info("Removing orphan Konta-managed project: %s", project)
 				if !r.dryRun {
 					if err := r.downProject(project); err != nil {
@@ -230,9 +233,10 @@ func (r *Reconciler) CleanupOrphans() error {
 		return fmt.Errorf("failed to get running projects: %w", err)
 	}
 
-	// Remove orphan projects (only Konta-managed ones)
+	// Remove orphan projects (only Konta-managed ones).
+	// Rolling stacks (<app>-<hash>) that belong to a desired app are NOT orphans.
 	for _, project := range running {
-		if !contains(desired, project) {
+		if !isDesiredOrRollingStack(project, desired) {
 			logger.Info("Removing orphan Konta-managed project: %s", project)
 			if !r.dryRun {
 				if err := r.downProject(project); err != nil {
@@ -401,13 +405,12 @@ func (r *Reconciler) reconcileProject(project string) error {
 		}
 
 		if !hasHealthcheck {
-			_ = r.downComposeProject(targetProjectName, false)
-			return fmt.Errorf("rolling deployment requires healthcheck in compose for project %s", project)
-		}
-
-		if err := r.waitForProjectHealthyWithRetries(targetProjectName, r.config.Deploy.RollingHealthTimeoutSeconds, r.config.Deploy.RollingHealthRetries); err != nil {
-			_ = r.downComposeProject(targetProjectName, false)
-			return fmt.Errorf("rolling deployment healthcheck failed for project %s: %w", project, err)
+			logger.Warn("Rolling deployment for project %s has no healthcheck defined. Proceeding without health verification. Consider adding a healthcheck for safer rolling deployments.", project)
+		} else {
+			if err := r.waitForProjectHealthyWithRetries(targetProjectName, r.config.Deploy.RollingHealthTimeoutSeconds, r.config.Deploy.RollingHealthRetries); err != nil {
+				_ = r.downComposeProject(targetProjectName, false)
+				return fmt.Errorf("rolling deployment healthcheck failed for project %s: %w", project, err)
+			}
 		}
 	}
 
@@ -957,6 +960,41 @@ func contains(slice []string, item string) bool {
 	for _, v := range slice {
 		if v == item {
 			return true
+		}
+	}
+	return false
+}
+
+// isShortCommitHash returns true when s looks like an 8-character lowercase hex string
+// (the short-commit suffix used in rolling stack names).
+func isShortCommitHash(s string) bool {
+	if len(s) != 8 {
+		return false
+	}
+	for _, c := range s {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			return false
+		}
+	}
+	return true
+}
+
+// isDesiredOrRollingStack returns true when the running project name either
+// matches a desired project directly, or is a rolling stack for one
+// (pattern: <desiredApp>-<8hexchars>).
+// Rolling stacks whose base app is still desired are managed by
+// cleanupOldStacksForApp and must NOT be treated as orphans here.
+func isDesiredOrRollingStack(project string, desired []string) bool {
+	if contains(desired, project) {
+		return true
+	}
+	for _, d := range desired {
+		prefix := d + "-"
+		if strings.HasPrefix(project, prefix) {
+			suffix := project[len(prefix):]
+			if isShortCommitHash(suffix) {
+				return true
+			}
 		}
 	}
 	return false
