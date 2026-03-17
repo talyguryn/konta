@@ -855,7 +855,8 @@ func autoUpdate(currentVersion string, release *githubRelease) error {
 
 func Update(currentVersion string, forceYes bool) error {
 	fmt.Printf("Current version: v%s\n", currentVersion)
-	fmt.Println("Checking for updates from GitHub...\n")
+	fmt.Println("Checking for updates from GitHub...")
+	fmt.Println()
 
 	release, err := fetchLatestRelease()
 	if err != nil {

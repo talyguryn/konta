@@ -60,7 +60,7 @@ func reconcileOnceFetch(dryRun bool, version string) error {
 		logger.Info("Repository initialized. Commit: %s", newCommit[:8])
 
 		// First run: reconcile all projects
-		if err := reconcileWithPersistentRepo(cfg, persistentRepoDir, nil, dryRun); err != nil {
+		if err := reconcileWithPersistentRepo(cfg, persistentRepoDir, newCommit, nil, dryRun); err != nil {
 			return err
 		}
 
@@ -91,7 +91,7 @@ func reconcileOnceFetch(dryRun bool, version string) error {
 		// Even without changes, perform health check
 		logger.Info("Performing container health check")
 		if !dryRun {
-			reconciler := reconcile.New(cfg, persistentRepoDir, dryRun)
+			reconciler := reconcile.New(cfg, persistentRepoDir, dryRun, currentState.LastCommit)
 			reconciler.SetChangedProjects(nil)
 			if _, err := reconciler.HealthCheck(); err != nil {
 				logger.Warn("Health check issues: %v", err)
@@ -122,7 +122,7 @@ func reconcileOnceFetch(dryRun bool, version string) error {
 	}
 
 	// Reconcile with persistent repository
-	if err := reconcileWithPersistentRepo(cfg, persistentRepoDir, changedProjects, dryRun); err != nil {
+	if err := reconcileWithPersistentRepo(cfg, persistentRepoDir, newCommit, changedProjects, dryRun); err != nil {
 		return err
 	}
 
@@ -137,8 +137,8 @@ func reconcileOnceFetch(dryRun bool, version string) error {
 }
 
 // reconcileWithPersistentRepo performs reconciliation without cloning
-func reconcileWithPersistentRepo(cfg *types.Config, repoDir string, changedProjects []string, dryRun bool) error {
-	reconciler := reconcile.New(cfg, repoDir, dryRun)
+func reconcileWithPersistentRepo(cfg *types.Config, repoDir string, deployCommit string, changedProjects []string, dryRun bool) error {
+	reconciler := reconcile.New(cfg, repoDir, dryRun, deployCommit)
 
 	if changedProjects != nil {
 		reconciler.SetChangedProjects(changedProjects)
