@@ -429,7 +429,7 @@ func (r *Reconciler) reconcileProject(project string) error {
 	if rollingEnabled {
 		hasHealthcheck, err := r.composeHasHealthcheck(composePath)
 		if err != nil {
-			_ = r.downComposeProject(targetProjectName, false)
+			_ = r.downComposeProject(targetProjectName, true)
 			return fmt.Errorf("failed to inspect healthcheck for rolling project %s: %w", project, err)
 		}
 
@@ -437,7 +437,7 @@ func (r *Reconciler) reconcileProject(project string) error {
 			logger.Warn("Rolling deployment for project %s has no healthcheck defined. Proceeding without health verification. Consider adding a healthcheck for safer rolling deployments.", project)
 		} else {
 			if err := r.waitForProjectHealthyWithRetries(targetProjectName, r.config.Deploy.RollingHealthTimeoutSeconds, r.config.Deploy.RollingHealthRetries); err != nil {
-				_ = r.downComposeProject(targetProjectName, false)
+				_ = r.downComposeProject(targetProjectName, true)
 				return fmt.Errorf("rolling deployment healthcheck failed for project %s: %w", project, err)
 			}
 		}
@@ -587,7 +587,7 @@ func (r *Reconciler) cleanupOldStacksForApp(baseProject string, keepStack string
 		if stack == keepStack {
 			continue
 		}
-		if err := r.downComposeProject(stack, false); err != nil {
+		if err := r.downComposeProject(stack, true); err != nil {
 			return fmt.Errorf("failed to cleanup old stack %s: %w", stack, err)
 		}
 	}
