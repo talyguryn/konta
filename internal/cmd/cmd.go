@@ -1108,11 +1108,21 @@ func reconcileOnce(dryRun bool, version string, isFirstRun bool, forceFullRedepl
 		if dryRun {
 			return
 		}
-		desiredProjects, desiredErr := listDesiredProjectsForStatePrune(filepath.Join(releaseDir, cfg.Repository.Path))
+
+		appsDirForPrune := filepath.Join(releaseDir, cfg.Repository.Path)
+		desiredProjects, desiredErr := listDesiredProjectsForStatePrune(appsDirForPrune)
+		if desiredErr != nil {
+			resolvedCurrentDir, resolveErr := filepath.EvalSymlinks(state.GetCurrentLink())
+			if resolveErr == nil {
+				fallbackAppsDir := filepath.Join(resolvedCurrentDir, cfg.Repository.Path)
+				desiredProjects, desiredErr = listDesiredProjectsForStatePrune(fallbackAppsDir)
+			}
+		}
 		if desiredErr != nil {
 			logger.Warn("Failed to collect desired projects for state prune: %v", desiredErr)
 			return
 		}
+
 		if err := state.PruneProjects(desiredProjects); err != nil {
 			logger.Warn("Failed to prune stale project state: %v", err)
 		}
@@ -1785,6 +1795,11 @@ func cleanupOldReleases(releasesDir string, keepCommits ...string) {
 		}
 	}
 
+	// Preserve commits referenced by state.json (global and per-project state).
+	for _, c := range stateCommitsToKeep() {
+		keep[c] = true
+	}
+
 	// Add any release directories currently mounted by konta.managed containers
 	mountedReleaseDirs, err := mountedReleaseDirsInUse(releasesDir)
 	if err != nil {
@@ -1828,6 +1843,35 @@ func cleanupOldReleases(releasesDir string, keepCommits ...string) {
 			logger.Info("Removed old release: %s", name)
 		}
 	}
+}
+
+func stateCommitsToKeep() []string {
+	st, err := state.Load()
+	if err != nil {
+		logger.Warn("Failed to load state for release retention: %v", err)
+		return nil
+	}
+
+	seen := make(map[string]bool)
+	commits := make([]string, 0)
+	appendCommit := func(commit string) {
+		commit = strings.TrimSpace(commit)
+		if commit == "" || seen[commit] {
+			return
+		}
+		seen[commit] = true
+		commits = append(commits, commit)
+	}
+
+	appendCommit(st.LastCommit)
+	appendCommit(st.LastAttemptedCommit)
+
+	for _, p := range st.Projects {
+		appendCommit(p.LastCommit)
+		appendCommit(p.ActiveCommit)
+	}
+
+	return commits
 }
 
 // mountedReleaseDirsInUse returns a set of release directory names (commit hashes)

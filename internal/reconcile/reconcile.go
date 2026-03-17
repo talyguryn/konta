@@ -437,7 +437,11 @@ func (r *Reconciler) reconcileProject(project string) error {
 		}
 
 		if !hasHealthcheck {
-			logger.Warn("Rolling deployment for project %s has no healthcheck defined. Proceeding without health verification. Consider adding a healthcheck for safer rolling deployments.", project)
+			logger.Warn("Rolling deployment for project %s has no healthcheck defined. Verifying containers are stably running before cleanup. Consider adding a healthcheck for safer rolling deployments.", project)
+			if err := r.waitForProjectRunningWithRetries(targetProjectName, r.config.Deploy.RollingHealthTimeoutSeconds, r.config.Deploy.RollingHealthRetries); err != nil {
+				_ = r.downComposeProject(targetProjectName, true)
+				return fmt.Errorf("rolling deployment runtime check failed for project %s: %w", project, err)
+			}
 		} else {
 			if err := r.waitForProjectHealthyWithRetries(targetProjectName, r.config.Deploy.RollingHealthTimeoutSeconds, r.config.Deploy.RollingHealthRetries); err != nil {
 				_ = r.downComposeProject(targetProjectName, true)
@@ -737,6 +741,70 @@ func (r *Reconciler) waitForProjectHealthyWithRetries(projectName string, timeou
 	}
 
 	return fmt.Errorf("all %d healthcheck attempt(s) failed", retries)
+}
+
+func (r *Reconciler) waitForProjectRunning(projectName string, timeoutSeconds int) error {
+	if timeoutSeconds <= 0 {
+		timeoutSeconds = 120
+	}
+
+	deadline := time.Now().Add(time.Duration(timeoutSeconds) * time.Second)
+	for time.Now().Before(deadline) {
+		cmd := exec.Command("docker", "ps", "-a", "--filter", fmt.Sprintf("label=com.docker.compose.project=%s", projectName), "--format", "{{.State}}")
+		output, err := cmd.Output()
+		if err != nil {
+			return err
+		}
+
+		lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+		allRunning := true
+		hasContainers := false
+		for _, line := range lines {
+			state := strings.TrimSpace(line)
+			if state == "" {
+				continue
+			}
+			hasContainers = true
+			if state != "running" {
+				allRunning = false
+				break
+			}
+		}
+
+		if hasContainers && allRunning {
+			return nil
+		}
+
+		time.Sleep(2 * time.Second)
+	}
+
+	return fmt.Errorf("timed out waiting for running containers in stack %s", projectName)
+}
+
+func (r *Reconciler) waitForProjectRunningWithRetries(projectName string, timeoutSeconds int, retries int) error {
+	if retries <= 0 {
+		retries = 1
+	}
+
+	var lastErr error
+	for attempt := 1; attempt <= retries; attempt++ {
+		if attempt > 1 {
+			logger.Warn("Retrying runtime check for stack %s (%d/%d)", projectName, attempt, retries)
+		}
+
+		if err := r.waitForProjectRunning(projectName, timeoutSeconds); err != nil {
+			lastErr = err
+			continue
+		}
+
+		return nil
+	}
+
+	if lastErr != nil {
+		return fmt.Errorf("all %d runtime check attempt(s) failed: %w", retries, lastErr)
+	}
+
+	return fmt.Errorf("all %d runtime check attempt(s) failed", retries)
 }
 
 func (r *Reconciler) shortDeployCommit() string {
