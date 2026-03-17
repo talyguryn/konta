@@ -91,8 +91,10 @@ func (r *Reconciler) Reconcile() (*types.ReconcileResult, error) {
 			continue
 		}
 
-		// Check if project is new or existing
-		isNew := !contains(running, project)
+		// Check if project is new or existing.
+		// A running rolling stack (<app>-<8hex>) means the app already exists
+		// and should be classified as Updated, not Added.
+		isNew := !isProjectPresentInRunning(project, running)
 
 		if err := r.reconcileProject(project); err != nil {
 			result.Failed = project
@@ -1029,6 +1031,24 @@ func contains(slice []string, item string) bool {
 			return true
 		}
 	}
+	return false
+}
+
+func isProjectPresentInRunning(project string, running []string) bool {
+	if contains(running, project) {
+		return true
+	}
+
+	prefix := project + "-"
+	for _, r := range running {
+		if strings.HasPrefix(r, prefix) {
+			suffix := r[len(prefix):]
+			if isShortCommitHash(suffix) {
+				return true
+			}
+		}
+	}
+
 	return false
 }
 

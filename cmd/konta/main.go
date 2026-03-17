@@ -9,7 +9,7 @@ import (
 	"github.com/talyguryn/konta/internal/logger"
 )
 
-const Version = "0.3.11"
+const Version = "0.3.12"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -73,6 +73,19 @@ func main() {
 		}
 		if err := cmd.Run(dryRun, watch, Version); err != nil {
 			logger.Fatal("Run failed: %v", err)
+		}
+
+	case "deploy":
+		args := os.Args[2:]
+		dryRun := false
+		for _, arg := range args {
+			switch arg {
+			case "--dry-run":
+				dryRun = true
+			}
+		}
+		if err := cmd.Deploy(dryRun, Version); err != nil {
+			logger.Fatal("Deploy failed: %v", err)
 		}
 
 	case "-d":

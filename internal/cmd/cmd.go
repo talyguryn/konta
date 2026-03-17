@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"runtime/debug"
 	"sort"
@@ -42,6 +43,7 @@ Usage:
 	konta bootstrap [OPTIONS]
 	konta uninstall
 	konta run [--dry-run] [--watch]
+	konta deploy [--dry-run]
 	konta daemon [enable|disable|restart|status]
 	konta enable | konta disable | konta restart | konta status
 	konta journal
@@ -75,6 +77,7 @@ Examples:
   konta run                         # Single reconciliation
   konta run --watch                 # Watch mode (poll every N seconds)
   konta run --dry-run               # Show what would change
+	konta deploy                      # Force full redeploy for latest commit
   konta start                       # Start the daemon
   konta stop                        # Stop the daemon
   konta restart                     # Restart the daemon
@@ -960,7 +963,7 @@ func Run(dryRun bool, watch bool, version string) error {
 	}
 
 	// Execute reconciliation once
-	if err := reconcileOnce(dryRun, version, true); err != nil && !watch {
+	if err := reconcileOnce(dryRun, version, true, false); err != nil && !watch {
 		// Only return error if not in watch mode
 		// In watch mode, we log error and continue
 		return err
@@ -1013,7 +1016,7 @@ func Run(dryRun bool, watch bool, version string) error {
 				_ = CheckForUpdates(version, cfg.KontaUpdates)
 			}
 
-			if err := reconcileOnce(false, version, false); err != nil {
+			if err := reconcileOnce(false, version, false, false); err != nil {
 				logger.Error("Deployment error: %v", err)
 				// Continue on error, don't exit
 			}
@@ -1047,8 +1050,14 @@ func Run(dryRun bool, watch bool, version string) error {
 	return nil
 }
 
+// Deploy performs a forced full redeploy on the latest commit.
+// Unlike Run, it does not rely on changed project detection and reconciles all projects.
+func Deploy(dryRun bool, version string) error {
+	return reconcileOnce(dryRun, version, true, true)
+}
+
 // reconcileOnce performs a single reconciliation cycle
-func reconcileOnce(dryRun bool, version string, isFirstRun bool) error {
+func reconcileOnce(dryRun bool, version string, isFirstRun bool, forceFullRedeploy bool) error {
 	l, err := lock.Acquire()
 	if err != nil {
 		return err
@@ -1115,40 +1124,50 @@ func reconcileOnce(dryRun bool, version string, isFirstRun bool) error {
 		if len(lastCommitStr) > 8 {
 			lastCommitStr = lastCommitStr[:8]
 		}
-		logger.Info("No changes detected (current: %s)", lastCommitStr)
-
-		// Even without changes, perform health check to ensure containers are running
-		logger.Info("Performing container health check")
-		if !dryRun {
-			reconciler := reconcile.New(cfg, releaseDir, dryRun, newCommit)
-			reconciler.SetChangedProjects(nil) // nil means check all projects
-			if _, err := reconciler.HealthCheck(); err != nil {
-				logger.Warn("Health check encountered issues: %v", err)
-				// Don't return error, just warn
-			}
-		}
-
-		// Ensure current symlink points to the latest known commit even without changes.
-		if !dryRun {
-			if err := atomicSwitch(newCommit, releaseDir); err != nil {
-				logger.Error("Atomic switch failed: %v", err)
-				return err
-			}
+		if forceFullRedeploy {
+			logger.Info("No new commit detected (current: %s), but force deploy is enabled", lastCommitStr)
 		} else {
-			logger.Info("[DRY-RUN] Would switch to commit: %s", newCommit[:8])
+			logger.Info("No changes detected (current: %s)", lastCommitStr)
 		}
-		return nil
+
+		if !forceFullRedeploy {
+			// Even without changes, perform health check to ensure containers are running
+			logger.Info("Performing container health check")
+			if !dryRun {
+				reconciler := reconcile.New(cfg, releaseDir, dryRun, newCommit)
+				reconciler.SetChangedProjects(nil) // nil means check all projects
+				if _, err := reconciler.HealthCheck(); err != nil {
+					logger.Warn("Health check encountered issues: %v", err)
+					// Don't return error, just warn
+				}
+			}
+
+			// Ensure current symlink points to the latest known commit even without changes.
+			if !dryRun {
+				if err := atomicSwitch(newCommit, releaseDir); err != nil {
+					logger.Error("Atomic switch failed: %v", err)
+					return err
+				}
+			} else {
+				logger.Info("[DRY-RUN] Would switch to commit: %s", newCommit[:8])
+			}
+			return nil
+		}
 	}
 
-	lastCommitStr := currentState.LastCommit
-	if len(lastCommitStr) > 8 {
-		lastCommitStr = lastCommitStr[:8]
-	} else if lastCommitStr == "" {
-		lastCommitStr = "none"
+	if newCommit != currentState.LastCommit {
+		lastCommitStr := currentState.LastCommit
+		if len(lastCommitStr) > 8 {
+			lastCommitStr = lastCommitStr[:8]
+		} else if lastCommitStr == "" {
+			lastCommitStr = "none"
+		}
+		logger.Info("New commit detected: %s -> %s", lastCommitStr, newCommit[:8])
+	} else if forceFullRedeploy {
+		logger.Info("Force full redeploy enabled for current commit: %s", newCommit[:8])
 	}
-	logger.Info("New commit detected: %s -> %s", lastCommitStr, newCommit[:8])
 
-	if !dryRun && !isFirstRun && strings.TrimSpace(currentState.LastAttemptedCommit) == newCommit && currentState.LastAttemptStatus == "failure" {
+	if !forceFullRedeploy && !dryRun && !isFirstRun && strings.TrimSpace(currentState.LastAttemptedCommit) == newCommit && currentState.LastAttemptStatus == "failure" {
 		logger.Warn("Skipping automatic redeploy for previously failed commit %s", newCommit[:8])
 		return nil
 	}
@@ -1158,23 +1177,29 @@ func reconcileOnce(dryRun bool, version string, isFirstRun bool) error {
 		return err
 	}
 
-	// Detect which projects have changed
-	changedProjects, err := git.GetChangedProjects(releaseDir, cfg.Repository.Path, currentState.LastCommit, newCommit)
-	if err != nil {
-		logger.Warn("Failed to detect changed projects via git diff: %v", err)
+	var changedProjects []string
+	if forceFullRedeploy {
+		changedProjects = nil // nil means reconcile all
+		logger.Info("Force full redeploy: reconciling all projects")
+	} else {
+		// Detect which projects have changed
+		changedProjects, err = git.GetChangedProjects(releaseDir, cfg.Repository.Path, currentState.LastCommit, newCommit)
+		if err != nil {
+			logger.Warn("Failed to detect changed projects via git diff: %v", err)
 
-		currentReleaseDir, currentReleaseErr := filepath.EvalSymlinks(state.GetCurrentLink())
-		if currentReleaseErr != nil {
-			logger.Warn("Snapshot diff fallback unavailable (cannot resolve current release): %v (will reconcile all)", currentReleaseErr)
-			changedProjects = nil // nil means reconcile all
-		} else {
-			snapshotChangedProjects, snapshotErr := detectChangedProjectsBySnapshot(currentReleaseDir, releaseDir, cfg.Repository.Path)
-			if snapshotErr != nil {
-				logger.Warn("Snapshot diff fallback failed: %v (will reconcile all)", snapshotErr)
+			currentReleaseDir, currentReleaseErr := filepath.EvalSymlinks(state.GetCurrentLink())
+			if currentReleaseErr != nil {
+				logger.Warn("Snapshot diff fallback unavailable (cannot resolve current release): %v (will reconcile all)", currentReleaseErr)
 				changedProjects = nil // nil means reconcile all
 			} else {
-				changedProjects = snapshotChangedProjects
-				logger.Info("Snapshot diff fallback detected %d changed project(s): %v", len(changedProjects), changedProjects)
+				snapshotChangedProjects, snapshotErr := detectChangedProjectsBySnapshot(currentReleaseDir, releaseDir, cfg.Repository.Path)
+				if snapshotErr != nil {
+					logger.Warn("Snapshot diff fallback failed: %v (will reconcile all)", snapshotErr)
+					changedProjects = nil // nil means reconcile all
+				} else {
+					changedProjects = snapshotChangedProjects
+					logger.Info("Snapshot diff fallback detected %d changed project(s): %v", len(changedProjects), changedProjects)
+				}
 			}
 		}
 	}
@@ -1959,6 +1984,26 @@ func listProjectsWithCompose(appsDir string) (map[string]string, error) {
 }
 
 func dirContentHash(dir string) (string, error) {
+	trackedFiles, trackedErr := listGitTrackedFiles(dir)
+	if trackedErr == nil {
+		hasher := sha256.New()
+		for _, relPath := range trackedFiles {
+			_, _ = hasher.Write([]byte("F:" + relPath + "\n"))
+
+			fileData, readErr := os.ReadFile(filepath.Join(dir, relPath))
+			if readErr != nil {
+				return "", readErr
+			}
+
+			fileHash := sha256.Sum256(fileData)
+			_, _ = hasher.Write(fileHash[:])
+		}
+
+		return hex.EncodeToString(hasher.Sum(nil)), nil
+	}
+
+	logger.Debug("Failed to list git-tracked files for %s, falling back to full directory hash: %v", dir, trackedErr)
+
 	hasher := sha256.New()
 
 	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
@@ -2004,6 +2049,31 @@ func dirContentHash(dir string) (string, error) {
 	}
 
 	return hex.EncodeToString(hasher.Sum(nil)), nil
+}
+
+func listGitTrackedFiles(dir string) ([]string, error) {
+	cmd := exec.Command("git", "-C", dir, "ls-files", "--", ".")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("git ls-files failed: %w (output: %s)", err, strings.TrimSpace(string(output)))
+	}
+
+	files := make([]string, 0)
+	for _, line := range strings.Split(string(output), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+
+		line = filepath.ToSlash(line)
+		if strings.HasPrefix(line, "./") {
+			line = strings.TrimPrefix(line, "./")
+		}
+		files = append(files, line)
+	}
+
+	sort.Strings(files)
+	return files, nil
 }
 
 func listDesiredProjectsForStatePrune(appsDir string) ([]string, error) {
@@ -2237,14 +2307,23 @@ func findProjectsMarkedForRecreate(appsDir string) ([]string, error) {
 			continue // No compose file, skip
 		}
 
-		content := strings.ToLower(string(data))
-		if strings.Contains(content, "konta.recreate=true") {
+		if composeHasRecreateLabel(data) {
 			recreateProjects = append(recreateProjects, projectName)
 		}
 	}
 
 	sort.Strings(recreateProjects)
 	return recreateProjects, nil
+}
+
+func composeHasRecreateLabel(data []byte) bool {
+	// Match only explicit YAML label entries, not comments or arbitrary text.
+	// Examples matched:
+	//   - konta.recreate=true
+	//   - "konta.recreate=true"
+	//   - 'konta.recreate=true'
+	pattern := regexp.MustCompile(`(?im)^\s*-\s*["']?konta\.recreate\s*=\s*true["']?\s*$`)
+	return pattern.Match(data)
 }
 
 func contains(slice []string, item string) bool {
