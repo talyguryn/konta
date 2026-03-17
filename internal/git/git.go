@@ -3,6 +3,7 @@ package git
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -253,5 +254,29 @@ func GetChangedProjects(repoDir string, appsPath string, oldCommit string, newCo
 	}
 
 	return result, nil
+}
+
+// ResolveLatestCommit returns the latest commit hash of the configured branch
+// without cloning the repository. Uses native git ls-remote.
+func ResolveLatestCommit(config *types.RepositoryConf) (string, error) {
+	repoURL := config.URL
+	if config.Token != "" {
+		repoURL = strings.Replace(repoURL, "https://", "https://git:"+config.Token+"@", 1)
+	}
+
+	ref := "refs/heads/" + config.Branch
+	cmd := exec.Command("git", "ls-remote", "--exit-code", repoURL, ref)
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	output, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("git ls-remote failed: %w", err)
+	}
+
+	line := strings.TrimSpace(strings.SplitN(string(output), "\t", 2)[0])
+	if len(line) != 40 {
+		return "", fmt.Errorf("unexpected ls-remote output: %q", string(output))
+	}
+
+	return line, nil
 }
 

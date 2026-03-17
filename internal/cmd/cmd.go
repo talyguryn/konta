@@ -1095,13 +1095,25 @@ func reconcileOnce(dryRun bool, version string, isFirstRun bool, forceFullRedepl
 		cleanupOldReleases(state.GetReleasesDir(), activeCommitForCleanup, stableRollbackCommit)
 	}()
 
-	// Clone/update the repository
-	releaseDir := filepath.Join(state.GetReleasesDir(), "temp-"+time.Now().Format("20060102150405"))
-	defer func() { _ = os.RemoveAll(releaseDir) }()
-
-	newCommit, err := git.Clone(&cfg.Repository, releaseDir)
+	// Clone the repository into a temp directory, then immediately promote to stable versioned path.
+	// Resolve latest commit hash upfront (no clone needed yet).
+	// This allows us to skip cloning entirely when the release dir already exists.
+	newCommit, err := git.ResolveLatestCommit(&cfg.Repository)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to resolve latest commit: %w", err)
+	}
+
+	// Clone directly into the stable versioned release directory — no temp dir ever created.
+	// Docker bind mounts will always reference this stable path.
+	releaseDir := filepath.Join(state.GetReleasesDir(), newCommit)
+	if _, statErr := os.Stat(releaseDir); statErr != nil {
+		// Release dir doesn't exist yet — clone directly into it
+		if _, err := git.Clone(&cfg.Repository, releaseDir); err != nil {
+			return err
+		}
+		logger.Debug("Cloned into stable release directory: %s", newCommit[:8])
+	} else {
+		logger.Debug("Reusing existing stable release directory: %s", newCommit[:8])
 	}
 
 	defer func() {
@@ -1375,15 +1387,8 @@ func reconcileOnce(dryRun bool, version string, isFirstRun bool, forceFullRedepl
 		}
 	}
 
-	deploymentRepoDir := releaseDir
-	existingReleaseDir := filepath.Join(state.GetReleasesDir(), newCommit)
-	if info, statErr := os.Stat(existingReleaseDir); statErr == nil && info.IsDir() {
-		deploymentRepoDir = existingReleaseDir
-		logger.Info("Using existing release directory for reconciliation: %s", newCommit[:8])
-	}
-
 	// Create hook runner
-	hookRunner := hooks.New(deploymentRepoDir, cfg.Hooks.StartedAbs, cfg.Hooks.PreAbs, cfg.Hooks.SuccessAbs, cfg.Hooks.FailureAbs, cfg.Hooks.PostUpdateAbs)
+	hookRunner := hooks.New(releaseDir, cfg.Hooks.StartedAbs, cfg.Hooks.PreAbs, cfg.Hooks.SuccessAbs, cfg.Hooks.FailureAbs, cfg.Hooks.PostUpdateAbs)
 
 	// Run pre-hook
 	if err := hookRunner.RunPre(); err != nil {
@@ -1394,12 +1399,12 @@ func reconcileOnce(dryRun bool, version string, isFirstRun bool, forceFullRedepl
 	}
 
 	// Perform reconciliation
-	reconciler := reconcile.New(cfg, deploymentRepoDir, dryRun, newCommit)
+	reconciler := reconcile.New(cfg, releaseDir, dryRun, newCommit)
 
 	// Optionally ensure projects marked with konta.recreate=true are always reconciled.
 	// This is a manual override for projects that need guaranteed cleanup on each cycle.
 	if changedProjects != nil {
-		recreateProjects, err := findProjectsMarkedForRecreate(filepath.Join(deploymentRepoDir, cfg.Repository.Path))
+		recreateProjects, err := findProjectsMarkedForRecreate(filepath.Join(releaseDir, cfg.Repository.Path))
 		if err != nil {
 			logger.Debug("Failed to find konta.recreate projects: %v", err)
 		} else if len(recreateProjects) > 0 {
