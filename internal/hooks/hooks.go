@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/talyguryn/konta/internal/logger"
 	"github.com/talyguryn/konta/internal/types"
@@ -50,7 +51,28 @@ func (r *Runner) RunSuccess(result *types.ReconcileResult) error {
 		logger.Warn("Failed to marshal reconcile result: %v", err)
 		return r.run("success")
 	}
-	return r.run("success", string(jsonData))
+
+	payload := normalizeSuccessHookPayload(string(jsonData))
+	return r.run("success", payload)
+}
+
+func normalizeSuccessHookPayload(payload string) string {
+	payload = strings.TrimSpace(payload)
+	if json.Valid([]byte(payload)) {
+		return payload
+	}
+
+	trimmed := payload
+	for strings.HasSuffix(trimmed, "}") {
+		trimmed = strings.TrimSuffix(trimmed, "}")
+		if json.Valid([]byte(trimmed)) {
+			logger.Warn("Success hook payload had trailing unmatched '}', using sanitized payload")
+			return trimmed
+		}
+	}
+
+	logger.Warn("Success hook payload is invalid JSON, passing original payload to hook")
+	return payload
 }
 
 // RunFailure runs the failure hook
