@@ -80,6 +80,9 @@ func (r *Reconciler) Reconcile() (*types.ReconcileResult, error) {
 
 	logger.Info("Found %d running Konta-managed projects", len(running))
 
+	removedOrphans := r.cleanupOrphanProjects(desired, running)
+	result.Removed = append(result.Removed, removedOrphans...)
+
 	// Track which projects were reconciled
 	reconciledProjects := []string{}
 
@@ -149,25 +152,6 @@ func (r *Reconciler) Reconcile() (*types.ReconcileResult, error) {
 			} else {
 				reconciledProjects = append(reconciledProjects, project)
 				result.Started = append(result.Started, project)
-			}
-		}
-	}
-
-	// Remove orphan projects (only Konta-managed ones with konta.managed=true label)
-	// We only remove projects that Konta explicitly manages, never other projects.
-	// Rolling stacks (<app>-<hash>) that belong to a desired app are NOT orphans —
-	// they are cleaned up by cleanupOldStacksForApp during the next reconcile.
-	for _, project := range running {
-		if !isDesiredOrRollingStack(project, desired) {
-			logger.Info("Removing orphan Konta-managed project: %s", project)
-			if !r.dryRun {
-				if err := r.downProject(project); err != nil {
-					logger.Error("Failed to remove project %s: %v", project, err)
-				} else {
-					result.Removed = append(result.Removed, project)
-				}
-			} else {
-				logger.Info("[DRY-RUN] Would remove project: %s", project)
 			}
 		}
 	}
@@ -246,18 +230,7 @@ func (r *Reconciler) HealthCheck() ([]string, error) {
 	if err != nil {
 		logger.Warn("Failed to get running projects: %v", err)
 	} else {
-		for _, project := range running {
-			if !isDesiredOrRollingStack(project, desired) {
-				logger.Info("Removing orphan Konta-managed project: %s", project)
-				if !r.dryRun {
-					if err := r.downProject(project); err != nil {
-						logger.Error("Failed to remove project %s: %v", project, err)
-					}
-				} else {
-					logger.Info("[DRY-RUN] Would remove project: %s", project)
-				}
-			}
-		}
+		r.cleanupOrphanProjects(desired, running)
 	}
 
 	logger.Info("Health check complete")
@@ -283,21 +256,35 @@ func (r *Reconciler) CleanupOrphans() error {
 
 	// Remove orphan projects (only Konta-managed ones).
 	// Rolling stacks (<app>-<hash>) that belong to a desired app are NOT orphans.
-	for _, project := range running {
-		if !isDesiredOrRollingStack(project, desired) {
-			logger.Info("Removing orphan Konta-managed project: %s", project)
-			if !r.dryRun {
-				if err := r.downProject(project); err != nil {
-					logger.Error("Failed to remove project %s: %v", project, err)
-				}
-			} else {
-				logger.Info("[DRY-RUN] Would remove project: %s", project)
-			}
-		}
-	}
+	r.cleanupOrphanProjects(desired, running)
 
 	logger.Info("Orphan cleanup complete")
 	return nil
+}
+
+func (r *Reconciler) cleanupOrphanProjects(desired []string, running []string) []string {
+	removed := make([]string, 0)
+
+	for _, project := range running {
+		if isDesiredOrRollingStack(project, desired) {
+			continue
+		}
+
+		logger.Info("Removing orphan Konta-managed project: %s", project)
+		if r.dryRun {
+			logger.Info("[DRY-RUN] Would remove project: %s", project)
+			continue
+		}
+
+		if err := r.downProject(project); err != nil {
+			logger.Error("Failed to remove project %s: %v", project, err)
+			continue
+		}
+
+		removed = append(removed, project)
+	}
+
+	return removed
 }
 
 func (r *Reconciler) getDesiredProjects() ([]string, error) {
