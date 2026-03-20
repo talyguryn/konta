@@ -16,22 +16,22 @@ import (
 
 // Reconciler manages the reconciliation process
 type Reconciler struct {
-	config         *types.Config
-	repoDir        string
-	dryRun         bool
-	appsDir        string
-	deployCommit   string
+	config          *types.Config
+	repoDir         string
+	dryRun          bool
+	appsDir         string
+	deployCommit    string
 	changedProjects map[string]bool // Track which projects have changes
 }
 
 // New creates a new reconciler
 func New(config *types.Config, repoDir string, dryRun bool, deployCommit string) *Reconciler {
 	return &Reconciler{
-		config:         config,
-		repoDir:        repoDir,
-		dryRun:         dryRun,
-		appsDir:        filepath.Join(repoDir, config.Repository.Path),
-		deployCommit:   strings.TrimSpace(deployCommit),
+		config:          config,
+		repoDir:         repoDir,
+		dryRun:          dryRun,
+		appsDir:         filepath.Join(repoDir, config.Repository.Path),
+		deployCommit:    strings.TrimSpace(deployCommit),
 		changedProjects: make(map[string]bool),
 	}
 }
@@ -362,8 +362,6 @@ func (r *Reconciler) getRunningProjects() ([]string, error) {
 	return projects, nil
 }
 
-
-
 func (r *Reconciler) reconcileProject(project string) error {
 	composePath := filepath.Join(r.appsDir, project, "docker-compose.yml")
 
@@ -386,6 +384,22 @@ func (r *Reconciler) reconcileProject(project string) error {
 
 	if err := r.handleProjectModeMigration(project, targetProjectName, rollingEnabled); err != nil {
 		return err
+	}
+
+	if !rollingEnabled {
+		hasLegacyStack, err := r.hasStack(project, project)
+		if err != nil {
+			return fmt.Errorf("failed to inspect existing non-rolling stack for project %s: %w", project, err)
+		}
+
+		if hasLegacyStack {
+			logger.Info("Restarting non-rolling project %s before compose up to free host-bound resources", project)
+			if !r.dryRun {
+				if err := r.downComposeProject(project, false); err != nil {
+					return fmt.Errorf("failed to restart non-rolling project %s before compose up: %w", project, err)
+				}
+			}
+		}
 	}
 
 	if r.dryRun {
@@ -651,6 +665,21 @@ func (r *Reconciler) listStacksForApp(baseProject string) ([]string, error) {
 
 	sort.Strings(stacks)
 	return stacks, nil
+}
+
+func (r *Reconciler) hasStack(baseProject string, stackName string) (bool, error) {
+	stacks, err := r.listStacksForApp(baseProject)
+	if err != nil {
+		return false, err
+	}
+
+	for _, stack := range stacks {
+		if stack == stackName {
+			return true, nil
+		}
+	}
+
+	return false, nil
 }
 
 func (r *Reconciler) downComposeProject(projectName string, fullCleanup bool) error {

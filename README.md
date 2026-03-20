@@ -230,9 +230,19 @@ Read the [Commands](#commands) section to learn how to manage Konta and check lo
 
 Konta manages only containers with label `konta.managed=true` in docker-compose files. This allows you to have some containers in the same compose file that are not managed by Konta (e.g., for testing or manual management).
 
+### konta.rolling
+
+If you add the label `konta.rolling=true` to a service, Konta deploys that project in rolling mode using a commit-suffixed Compose project name. The new stack is started first, health-checked, and only then are old stacks removed.
+
+If `konta.rolling=true` is not present, Konta uses the stable Compose project name and performs a restart-style deployment: an existing stack is brought down first and then started again. This avoids host port conflicts when the same project binds fixed ports on the VPS.
+
 ### konta.stopped
 
 If you want Konta to disable a container and not start it, you can add the label `konta.stopped=true` to that service in your docker-compose file. This is useful for services that you want to keep defined in Git but not run on the server.
+
+### konta.recreate
+
+If you want to force Konta to recreate containers for a service on every deploy, you can add the label `konta.recreate=true` to that service in your docker-compose file.
 
 ## Hooks
 
@@ -379,7 +389,7 @@ Testing:
 Research:
 
 - [ ] how to migrate to new repo structure if you want to change repo
-- [ ] how to implement atomic deployments with zero downtime
+- [x] how to implement atomic deployments with zero downtime
 - [ ] how to backup and restore docker volumes
 - [ ] how to add a new server to existing repo without giving it access to all other servers
 - [ ] check GitLab support
