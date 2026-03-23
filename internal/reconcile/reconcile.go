@@ -195,9 +195,16 @@ func (r *Reconciler) HealthCheck() ([]string, error) {
 		}
 
 		projectAppsDir := r.appsDirForCommit(expectedCommit)
+		targetProjectName, _, err := r.resolveTargetProjectName(project, expectedCommit, projectAppsDir)
+		if err != nil {
+			logger.Warn("Failed to resolve target stack for project %s: %v", project, err)
+			continue
+		}
+
+		logger.Debug("Health check target for project %s: stack=%s commit=%s source=current release", project, targetProjectName, shortCommitFrom(expectedCommit))
 
 		// Fully missing → full reconcile (handles rolling naming correctly)
-		if !r.hasAnyContainersForApp(project) {
+		if !r.hasAnyContainersForStack(targetProjectName) {
 			if !r.allowSelfHealAttempt(project, "containers are missing") {
 				continue
 			}
@@ -207,12 +214,13 @@ func (r *Reconciler) HealthCheck() ([]string, error) {
 			if err := r.reconcileProjectWithContext(project, expectedCommit, projectAppsDir); err != nil {
 				logger.Warn("Failed to restore project %s: %v", project, err)
 			} else {
+				r.resetSelfHealAttemptsAfterSuccess(project)
 				startedProjects = append(startedProjects, project)
 			}
 			continue
 		}
 
-		hasStoppedContainers, err := r.hasStoppedContainers(project)
+		hasStoppedContainers, err := r.hasStoppedContainersForStack(targetProjectName)
 		if err != nil {
 			logger.Warn("Failed to check containers for project %s: %v", project, err)
 			continue
@@ -229,12 +237,13 @@ func (r *Reconciler) HealthCheck() ([]string, error) {
 				logger.Warn("Failed to start project %s: %v", project, err)
 				// Don't return error, just warn - let other projects continue
 			} else {
+				r.resetSelfHealAttemptsAfterSuccess(project)
 				startedProjects = append(startedProjects, project)
 			}
 			continue
 		}
 
-		hasUnhealthyContainers, err := r.hasUnhealthyContainers(project)
+		hasUnhealthyContainers, err := r.hasUnhealthyContainersForStack(targetProjectName)
 		if err != nil {
 			logger.Warn("Failed to check unhealthy containers for project %s: %v", project, err)
 			continue
@@ -250,6 +259,7 @@ func (r *Reconciler) HealthCheck() ([]string, error) {
 			if err := r.reconcileProjectWithContext(project, expectedCommit, projectAppsDir); err != nil {
 				logger.Warn("Failed to recover unhealthy project %s: %v", project, err)
 			} else {
+				r.resetSelfHealAttemptsAfterSuccess(project)
 				startedProjects = append(startedProjects, project)
 			}
 			continue
@@ -271,9 +281,13 @@ func (r *Reconciler) HealthCheck() ([]string, error) {
 			if err := r.reconcileProjectWithContext(project, expectedCommit, projectAppsDir); err != nil {
 				logger.Warn("Failed to recover drifted project %s: %v", project, err)
 			} else {
+				r.resetSelfHealAttemptsAfterSuccess(project)
 				startedProjects = append(startedProjects, project)
 			}
+			continue
 		}
+
+		logger.Debug("Project %s matches expected stack %s and needs no healing", project, targetProjectName)
 	}
 
 	// Remove orphan projects (only Konta-managed ones with konta.managed=true label)
@@ -312,6 +326,8 @@ func (r *Reconciler) allowSelfHealAttempt(project string, reason string) bool {
 		return false
 	}
 
+	logger.Debug("Self-heal allowed for project %s (%s): attempt %d of %d", project, reason, attempts+1, maxRetry)
+
 	return true
 }
 
@@ -329,6 +345,12 @@ func (r *Reconciler) recordSelfHealAttempt(project string, reason string) {
 	}
 
 	logger.Info("Self-heal attempt #%d/%d for project %s (%s)", attempts, maxRetry, project, reason)
+}
+
+func (r *Reconciler) resetSelfHealAttemptsAfterSuccess(project string) {
+	if err := state.ResetProjectSelfHealAttempts(project); err != nil {
+		logger.Warn("Failed to reset self-heal attempts for project %s: %v", project, err)
+	}
 }
 
 // CleanupOrphans removes Konta-managed containers that are no longer in the apps configuration
@@ -450,23 +472,16 @@ func (r *Reconciler) reconcileProject(project string) error {
 func (r *Reconciler) reconcileProjectWithContext(project string, deployCommit string, appsDir string) error {
 	composePath := filepath.Join(appsDir, project, "docker-compose.yml")
 	workDir := filepath.Join(appsDir, project)
-	projectShortCommit := shortCommitFrom(deployCommit)
+	targetProjectName, projectShortCommit, err := r.resolveTargetProjectName(project, deployCommit, appsDir)
+	if err != nil {
+		return err
+	}
 
 	logger.Info("Reconciling project: %s", project)
 
 	rollingEnabled, err := r.composeHasLabel(composePath, "konta.rolling=true")
 	if err != nil {
 		return fmt.Errorf("failed to inspect rolling label for project %s: %w", project, err)
-	}
-
-	useProjectHashName := r.shouldUseHashInProjectName(rollingEnabled)
-	targetProjectName := project
-	if useProjectHashName {
-		shortCommit := projectShortCommit
-		if shortCommit == "" {
-			return fmt.Errorf("deploy commit is required when hash-based project naming is enabled")
-		}
-		targetProjectName = fmt.Sprintf("%s-%s", project, shortCommit)
 	}
 
 	if err := r.handleProjectModeMigration(project, targetProjectName, rollingEnabled, appsDir); err != nil {
@@ -966,16 +981,6 @@ func shortCommitFrom(commit string) string {
 }
 
 func (r *Reconciler) resolveExpectedCommitForProject(project string) (string, bool, error) {
-	projectCommit, err := state.GetProjectLastCommit(project)
-	if err != nil {
-		return "", false, err
-	}
-
-	projectCommit = strings.TrimSpace(projectCommit)
-	if projectCommit != "" {
-		return projectCommit, true, nil
-	}
-
 	return strings.TrimSpace(r.deployCommit), false, nil
 }
 
@@ -993,27 +998,27 @@ func (r *Reconciler) appsDirForCommit(commit string) string {
 	return r.appsDir
 }
 
+func (r *Reconciler) resolveTargetProjectName(project string, deployCommit string, appsDir string) (string, string, error) {
+	composePath := filepath.Join(appsDir, project, "docker-compose.yml")
+	rollingEnabled, err := r.composeHasLabel(composePath, "konta.rolling=true")
+	if err != nil {
+		return "", "", fmt.Errorf("failed to inspect rolling label for project %s: %w", project, err)
+	}
+
+	projectShortCommit := shortCommitFrom(deployCommit)
+	if r.shouldUseHashInProjectName(rollingEnabled) {
+		if projectShortCommit == "" {
+			return "", "", fmt.Errorf("deploy commit is required when hash-based project naming is enabled")
+		}
+		return fmt.Sprintf("%s-%s", project, projectShortCommit), projectShortCommit, nil
+	}
+
+	return project, projectShortCommit, nil
+}
+
 func (r *Reconciler) expectedStackName(project string, expectedCommit string, hasProjectCommit bool, useHashName bool, stacks []string) string {
 	if !useHashName {
 		return project
-	}
-
-	if hasProjectCommit {
-		shortCommit := shortCommitFrom(expectedCommit)
-		if shortCommit != "" {
-			return fmt.Sprintf("%s-%s", project, shortCommit)
-		}
-	}
-
-	if len(stacks) == 1 {
-		only := stacks[0]
-		prefix := project + "-"
-		if strings.HasPrefix(only, prefix) {
-			suffix := strings.TrimPrefix(only, prefix)
-			if isShortCommitHash(suffix) {
-				return only
-			}
-		}
 	}
 
 	shortCommit := shortCommitFrom(expectedCommit)
@@ -1120,7 +1125,7 @@ func (r *Reconciler) shouldUseHashInProjectName(rollingEnabled bool) bool {
 // the label). Rolling stacks whose compose project name starts with
 // "<project>-" are also matched.
 func (r *Reconciler) hasAnyContainersForApp(project string) bool {
-	// Check by konta.app label — present on well-labelled rolling stacks
+	// Preserved for reconciliation paths that reason about any stack of the app.
 	cmd := exec.Command("docker", "ps", "-a",
 		"--filter", "label=konta.managed=true",
 		"--filter", fmt.Sprintf("label=konta.app=%s", project),
@@ -1130,7 +1135,6 @@ func (r *Reconciler) hasAnyContainersForApp(project string) bool {
 		return true
 	}
 
-	// Check by exact compose project name (non-rolling)
 	cmd = exec.Command("docker", "ps", "-a",
 		"--filter", "label=konta.managed=true",
 		"--filter", fmt.Sprintf("label=com.docker.compose.project=%s", project),
@@ -1140,14 +1144,19 @@ func (r *Reconciler) hasAnyContainersForApp(project string) bool {
 		return true
 	}
 
-	// Check rolling stacks whose compose project starts with "<project>-<hash>"
-	// by listing all stacks and checking the prefix (reuses listStacksForApp).
 	stacks, err := r.listStacksForApp(project)
-	if err == nil && len(stacks) > 0 {
-		return true
-	}
+	return err == nil && len(stacks) > 0
+}
 
-	return false
+func (r *Reconciler) hasAnyContainersForStack(projectName string) bool {
+	cmd := exec.Command("docker", "ps", "-a",
+		"--filter", "label=konta.managed=true",
+		"--filter", fmt.Sprintf("label=com.docker.compose.project=%s", projectName),
+		"--format", "{{.ID}}",
+	)
+
+	output, err := cmd.Output()
+	return err == nil && strings.TrimSpace(string(output)) != ""
 }
 
 // hasStoppedContainers checks if a project has any stopped containers
@@ -1155,18 +1164,70 @@ func (r *Reconciler) hasAnyContainersForApp(project string) bool {
 func (r *Reconciler) hasStoppedContainers(project string) (bool, error) {
 	composePath := filepath.Join(r.appsDir, project, "docker-compose.yml")
 
-	// Check if compose file defines any services
 	if _, err := os.Stat(composePath); err != nil {
 		return false, err
 	}
 
-	// First, handle containers marked with konta.stopped=true - stop them if running
 	baseFilters := []string{"--filter", "label=konta.managed=true"}
 	if r.appHasLabeledStacks(project) {
 		baseFilters = append(baseFilters, "--filter", fmt.Sprintf("label=konta.app=%s", project))
 	} else {
 		baseFilters = append(baseFilters, "--filter", fmt.Sprintf("label=com.docker.compose.project=%s", project))
 	}
+
+	stopArgs := []string{"ps"}
+	stopArgs = append(stopArgs, baseFilters...)
+	stopArgs = append(stopArgs,
+		"--filter", "label=konta.stopped=true",
+		"--filter", "status=running",
+		"--format", "{{.ID}}",
+	)
+	stopCmd := exec.Command("docker", stopArgs...)
+
+	output, err := stopCmd.Output()
+	if err == nil && len(strings.TrimSpace(string(output))) > 0 {
+		containers := strings.Split(strings.TrimSpace(string(output)), "\n")
+		for _, containerID := range containers {
+			if containerID != "" {
+				logger.Info("Stopping container marked with konta.stopped=true: %s", containerID[:12])
+				if !r.dryRun {
+					doStopCmd := exec.Command("docker", "stop", containerID)
+					if err := doStopCmd.Run(); err != nil {
+						logger.Warn("Failed to stop container %s: %v", containerID[:12], err)
+					}
+				}
+			}
+		}
+	}
+
+	checkArgs := []string{"ps", "-a"}
+	checkArgs = append(checkArgs, baseFilters...)
+	checkArgs = append(checkArgs,
+		"--filter", "status=exited",
+		"--format", "{{.ID}}|{{.Label \"konta.stopped\"}}",
+	)
+	checkCmd := exec.Command("docker", checkArgs...)
+
+	output, err = checkCmd.Output()
+	if err != nil {
+		return false, nil
+	}
+
+	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+		if line == "" {
+			continue
+		}
+		parts := strings.Split(line, "|")
+		if len(parts) > 1 && parts[1] != "true" {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+func (r *Reconciler) hasStoppedContainersForStack(projectName string) (bool, error) {
+	baseFilters := []string{"--filter", "label=konta.managed=true", "--filter", fmt.Sprintf("label=com.docker.compose.project=%s", projectName)}
 
 	stopArgs := []string{"ps"}
 	stopArgs = append(stopArgs, baseFilters...)
@@ -1267,20 +1328,61 @@ func (r *Reconciler) hasUnhealthyContainers(project string) (bool, error) {
 	return false, nil
 }
 
+func (r *Reconciler) hasUnhealthyContainersForStack(projectName string) (bool, error) {
+	baseFilters := []string{"--filter", "label=konta.managed=true", "--filter", fmt.Sprintf("label=com.docker.compose.project=%s", projectName)}
+
+	args := []string{"ps", "-a"}
+	args = append(args, baseFilters...)
+	args = append(args, "--format", "{{.Status}}|{{.Label \"konta.stopped\"}}")
+
+	cmd := exec.Command("docker", args...)
+	output, err := cmd.Output()
+	if err != nil {
+		return false, err
+	}
+
+	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+
+		parts := strings.SplitN(line, "|", 2)
+		if len(parts) != 2 {
+			continue
+		}
+
+		status := strings.ToLower(strings.TrimSpace(parts[0]))
+		stoppedLabel := strings.TrimSpace(parts[1])
+		if stoppedLabel == "true" {
+			continue
+		}
+
+		if strings.Contains(status, "(unhealthy)") {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
 func (r *Reconciler) startProject(project string) error {
 	return r.startProjectWithContext(project, r.deployCommit, r.appsDir)
 }
 
 func (r *Reconciler) startProjectWithContext(project string, deployCommit string, appsDir string) error {
 	composePath := filepath.Join(appsDir, project, "docker-compose.yml")
-	projectShortCommit := shortCommitFrom(deployCommit)
+	targetProjectName, projectShortCommit, err := r.resolveTargetProjectName(project, deployCommit, appsDir)
+	if err != nil {
+		return err
+	}
 
-	if r.appHasLabeledStacks(project) {
+	if r.hasAnyContainersForStack(targetProjectName) {
 		startCmd := exec.Command(
 			"docker", "ps",
 			"-a",
 			"--filter", "label=konta.managed=true",
-			"--filter", fmt.Sprintf("label=konta.app=%s", project),
+			"--filter", fmt.Sprintf("label=com.docker.compose.project=%s", targetProjectName),
 			"--filter", "status=exited",
 			"--format", "{{.ID}}",
 		)
@@ -1312,7 +1414,7 @@ func (r *Reconciler) startProjectWithContext(project string, deployCommit string
 
 	cmd := exec.Command(
 		"docker", "compose",
-		"-p", project,
+		"-p", targetProjectName,
 		"-f", composePath,
 		"up", "-d",
 		"--remove-orphans",

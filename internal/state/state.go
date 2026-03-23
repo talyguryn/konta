@@ -272,6 +272,33 @@ func GetProjectLastCommit(project string) (string, error) {
 	return strings.TrimSpace(projectState.ActiveCommit), nil
 }
 
+// ResetProjectSelfHealAttempts clears self-heal attempts counter for a project.
+// The zero value is omitted from state.json due omitempty.
+func ResetProjectSelfHealAttempts(project string) error {
+	currentState, err := Load()
+	if err != nil {
+		return err
+	}
+
+	if currentState.Projects == nil {
+		return nil
+	}
+
+	projectState, ok := currentState.Projects[project]
+	if !ok {
+		return nil
+	}
+
+	if projectState.SelfHealAttempts == 0 {
+		return nil
+	}
+
+	projectState.SelfHealAttempts = 0
+	currentState.Projects[project] = projectState
+
+	return Save(currentState)
+}
+
 // GetStateDir returns the state directory
 func GetStateDir() string {
 	return getStateDir()
