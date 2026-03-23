@@ -128,10 +128,11 @@ func UpdateWithProjects(commit string, reconciledProjects []string) error {
 	// Update per-project state for reconciled projects
 	deployTime := time.Now().Format("2006-01-02 15:04:05")
 	for _, project := range reconciledProjects {
-		currentState.Projects[project] = types.ProjectState{
-			LastCommit:     commit,
-			LastDeployTime: deployTime,
-		}
+		projectState := currentState.Projects[project]
+		projectState.LastCommit = commit
+		projectState.LastDeployTime = deployTime
+		projectState.SelfHealAttempts = 0
+		currentState.Projects[project] = projectState
 	}
 
 	if err := Save(currentState); err != nil {
@@ -196,6 +197,54 @@ func MarkAttempt(commit string, status string) error {
 
 	logger.Debug("State attempt updated: commit=%s status=%s", commit, status)
 	return nil
+}
+
+// GetProjectSelfHealAttempts returns current self-heal attempt count for project.
+func GetProjectSelfHealAttempts(project string) (int, error) {
+	currentState, err := Load()
+	if err != nil {
+		return 0, err
+	}
+
+	if currentState.Projects == nil {
+		return 0, nil
+	}
+
+	projectState, ok := currentState.Projects[project]
+	if !ok {
+		return 0, nil
+	}
+
+	if projectState.SelfHealAttempts < 0 {
+		return 0, nil
+	}
+
+	return projectState.SelfHealAttempts, nil
+}
+
+// IncrementProjectSelfHealAttempts increments self-heal attempt count for project.
+func IncrementProjectSelfHealAttempts(project string) (int, error) {
+	currentState, err := Load()
+	if err != nil {
+		return 0, err
+	}
+
+	if currentState.Projects == nil {
+		currentState.Projects = make(map[string]types.ProjectState)
+	}
+
+	projectState := currentState.Projects[project]
+	if projectState.SelfHealAttempts < 0 {
+		projectState.SelfHealAttempts = 0
+	}
+	projectState.SelfHealAttempts++
+	currentState.Projects[project] = projectState
+
+	if err := Save(currentState); err != nil {
+		return 0, err
+	}
+
+	return projectState.SelfHealAttempts, nil
 }
 
 // GetStateDir returns the state directory

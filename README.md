@@ -234,6 +234,8 @@ Konta manages only containers with label `konta.managed=true` in docker-compose 
 
 If you add the label `konta.rolling=true` to a service, Konta deploys that project in rolling mode using a commit-suffixed Compose project name. The new stack is started first, health-checked, and only then are old stacks removed.
 
+Even when there are no new commits, Konta performs a health check cycle and can self-heal drift: if expected stack naming (by commit) or managed service list no longer matches the Compose definition, Konta runs full reconcile for that project.
+
 If `konta.rolling=true` is not present, Konta uses the stable Compose project name and performs a restart-style deployment: an existing stack is brought down first and then started again. This avoids host port conflicts when the same project binds fixed ports on the VPS.
 
 ### konta.stopped
@@ -247,6 +249,8 @@ If you want to force Konta to recreate containers for a service on every deploy,
 ## Hooks
 
 Konta supports lifecycle hooks that allow you to run custom scripts at different stages of the deployment process. You can place your hook scripts in the `hooks/` directory of your repository. Konta will look for the following scripts.
+
+Note: self-heal actions triggered by periodic no-change health checks do not run deploy hooks. This avoids unexpected notification bursts when Konta auto-recovers runtime drift.
 
 - `pre.sh` — Runs before any changes are applied. Use this for tasks like backing up data, sending notifications, or performing checks. If this script exits with a non-zero status, the deployment will be aborted, and the `failure.sh` hook will be triggered.
 - `success.sh` — Runs after successful deployment. Use this for tasks like clearing caches, sending success notifications, or performing post-deploy checks.
@@ -313,6 +317,9 @@ repository:
 # to wait until all containers in the new stack become healthy.
 # rolling_health_retries sets how many healthcheck attempts Konta does
 # before marking rolling deploy as failed.
+# self_heal controls automatic recovery during no-change health checks.
+# enable=true (default) allows auto-reconcile when drift/unhealthy/missing containers are detected.
+# max_retry limits self-heal attempts per project (0 = no limit).
 # github_deployments enables built-in GitHub Deployment statuses, commit statuses,
 # and failure comments on the failed commit with reason + compare link.
 # Uses repository.url + repository.token. The environment defaults to production.
@@ -320,6 +327,9 @@ deploy:
   project_name_hash_mode: rolling_only
   rolling_health_timeout_second: 20
   rolling_health_retries: 1
+  self_heal:
+    enable: true
+    max_retry: 0
   github_deployments:
     enable: true
     environment: production

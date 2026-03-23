@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/talyguryn/konta/internal/logger"
+	"github.com/talyguryn/konta/internal/state"
 	"github.com/talyguryn/konta/internal/types"
 )
 
@@ -163,6 +164,9 @@ func (r *Reconciler) Reconcile() (*types.ReconcileResult, error) {
 // HealthCheck ensures all desired containers are running (used when no code changes detected)
 func (r *Reconciler) HealthCheck() ([]string, error) {
 	logger.Info("Starting container health check")
+	if !r.config.Deploy.SelfHeal.Enable {
+		logger.Info("Self-heal is disabled (deploy.self_heal.enable=false): health check will not auto-reconcile drift or restarts")
+	}
 
 	// Get desired projects from git
 	desired, err := r.getDesiredProjects()
@@ -181,6 +185,11 @@ func (r *Reconciler) HealthCheck() ([]string, error) {
 	for _, project := range desired {
 		// Fully missing → full reconcile (handles rolling naming correctly)
 		if !r.hasAnyContainersForApp(project) {
+			if !r.allowSelfHealAttempt(project, "containers are missing") {
+				continue
+			}
+			r.recordSelfHealAttempt(project, "containers are missing")
+
 			logger.Info("Project %s has no containers, running full reconcile to restore it", project)
 			if err := r.reconcileProject(project); err != nil {
 				logger.Warn("Failed to restore project %s: %v", project, err)
@@ -197,6 +206,11 @@ func (r *Reconciler) HealthCheck() ([]string, error) {
 		}
 
 		if hasStoppedContainers {
+			if !r.allowSelfHealAttempt(project, "stopped containers") {
+				continue
+			}
+			r.recordSelfHealAttempt(project, "stopped containers")
+
 			logger.Info("Project %s has stopped containers, starting them", project)
 			if err := r.startProject(project); err != nil {
 				logger.Warn("Failed to start project %s: %v", project, err)
@@ -214,9 +228,35 @@ func (r *Reconciler) HealthCheck() ([]string, error) {
 		}
 
 		if hasUnhealthyContainers {
+			if !r.allowSelfHealAttempt(project, "unhealthy containers") {
+				continue
+			}
+			r.recordSelfHealAttempt(project, "unhealthy containers")
+
 			logger.Warn("Project %s has unhealthy containers, running full reconcile", project)
 			if err := r.reconcileProject(project); err != nil {
 				logger.Warn("Failed to recover unhealthy project %s: %v", project, err)
+			} else {
+				startedProjects = append(startedProjects, project)
+			}
+			continue
+		}
+
+		hasDrift, driftReason, err := r.hasDeploymentDrift(project)
+		if err != nil {
+			logger.Warn("Failed to check deployment drift for project %s: %v", project, err)
+			continue
+		}
+
+		if hasDrift {
+			if !r.allowSelfHealAttempt(project, fmt.Sprintf("deployment drift: %s", driftReason)) {
+				continue
+			}
+			r.recordSelfHealAttempt(project, fmt.Sprintf("deployment drift: %s", driftReason))
+
+			logger.Warn("Project %s has deployment drift (%s), running full reconcile", project, driftReason)
+			if err := r.reconcileProject(project); err != nil {
+				logger.Warn("Failed to recover drifted project %s: %v", project, err)
 			} else {
 				startedProjects = append(startedProjects, project)
 			}
@@ -235,6 +275,47 @@ func (r *Reconciler) HealthCheck() ([]string, error) {
 
 	logger.Info("Health check complete")
 	return startedProjects, nil
+}
+
+func (r *Reconciler) allowSelfHealAttempt(project string, reason string) bool {
+	if !r.config.Deploy.SelfHeal.Enable {
+		logger.Warn("Skipping self-heal for project %s (%s): disabled by config", project, reason)
+		return false
+	}
+
+	maxRetry := r.config.Deploy.SelfHeal.MaxRetry
+	if maxRetry <= 0 {
+		return true
+	}
+
+	attempts, err := state.GetProjectSelfHealAttempts(project)
+	if err != nil {
+		logger.Warn("Failed to read self-heal attempts for project %s: %v", project, err)
+		return false
+	}
+
+	if attempts >= maxRetry {
+		logger.Warn("Skipping self-heal for project %s (%s): max retry reached (%d/%d)", project, reason, attempts, maxRetry)
+		return false
+	}
+
+	return true
+}
+
+func (r *Reconciler) recordSelfHealAttempt(project string, reason string) {
+	attempts, err := state.IncrementProjectSelfHealAttempts(project)
+	if err != nil {
+		logger.Warn("Failed to persist self-heal attempt for project %s (%s): %v", project, reason, err)
+		return
+	}
+
+	maxRetry := r.config.Deploy.SelfHeal.MaxRetry
+	if maxRetry <= 0 {
+		logger.Info("Self-heal attempt #%d for project %s (%s)", attempts, project, reason)
+		return
+	}
+
+	logger.Info("Self-heal attempt #%d/%d for project %s (%s)", attempts, maxRetry, project, reason)
 }
 
 // CleanupOrphans removes Konta-managed containers that are no longer in the apps configuration
@@ -1188,6 +1269,115 @@ func contains(slice []string, item string) bool {
 		}
 	}
 	return false
+}
+
+func uniqueStrings(items []string) []string {
+	seen := make(map[string]bool, len(items))
+	result := make([]string, 0, len(items))
+	for _, item := range items {
+		trimmed := strings.TrimSpace(item)
+		if trimmed == "" || seen[trimmed] {
+			continue
+		}
+		seen[trimmed] = true
+		result = append(result, trimmed)
+	}
+	sort.Strings(result)
+	return result
+}
+
+func sameStringSet(a []string, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func (r *Reconciler) hasDeploymentDrift(project string) (bool, string, error) {
+	composePath := filepath.Join(r.appsDir, project, "docker-compose.yml")
+	rollingEnabled, err := r.composeHasLabel(composePath, "konta.rolling=true")
+	if err != nil {
+		return false, "", err
+	}
+
+	useHashName := r.shouldUseHashInProjectName(rollingEnabled)
+	expectedStack := project
+	if useHashName {
+		shortCommit := r.shortDeployCommit()
+		if shortCommit == "" {
+			return false, "", fmt.Errorf("deploy commit is required when hash-based project naming is enabled")
+		}
+		expectedStack = fmt.Sprintf("%s-%s", project, shortCommit)
+	}
+
+	stacks, err := r.listStacksForApp(project)
+	if err != nil {
+		return false, "", err
+	}
+
+	if !contains(stacks, expectedStack) {
+		return true, fmt.Sprintf("expected stack %s is missing (found: %v)", expectedStack, stacks), nil
+	}
+
+	if len(stacks) > 1 {
+		return true, fmt.Sprintf("multiple stacks detected for app (expected only %s, found: %v)", expectedStack, stacks), nil
+	}
+
+	expectedServices, err := r.getExpectedServicesForStack(project, expectedStack, composePath)
+	if err != nil {
+		return false, "", err
+	}
+
+	runningServices, err := r.getRunningManagedServicesForStack(expectedStack)
+	if err != nil {
+		return false, "", err
+	}
+
+	if !sameStringSet(expectedServices, runningServices) {
+		return true, fmt.Sprintf("service set mismatch (expected: %v, running: %v)", expectedServices, runningServices), nil
+	}
+
+	return false, "", nil
+}
+
+func (r *Reconciler) getExpectedServicesForStack(project string, stackName string, composePath string) ([]string, error) {
+	cmd := exec.Command(
+		"docker", "compose",
+		"-p", stackName,
+		"-f", composePath,
+		"config", "--services",
+	)
+	cmd.Dir = filepath.Join(r.appsDir, project)
+
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve compose services for stack %s: %w", stackName, err)
+	}
+
+	services := strings.Fields(string(output))
+	return uniqueStrings(services), nil
+}
+
+func (r *Reconciler) getRunningManagedServicesForStack(stackName string) ([]string, error) {
+	cmd := exec.Command(
+		"docker", "ps", "-a",
+		"--filter", "label=konta.managed=true",
+		"--filter", fmt.Sprintf("label=com.docker.compose.project=%s", stackName),
+		"--format", "{{.Label \"com.docker.compose.service\"}}",
+	)
+
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+
+	services := strings.Split(strings.TrimSpace(string(output)), "\n")
+	return uniqueStrings(services), nil
 }
 
 func isProjectPresentInRunning(project string, running []string) bool {

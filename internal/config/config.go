@@ -53,9 +53,13 @@ func Load() (*types.Config, error) {
 			Branch:   "main",
 		},
 		Deploy: types.DeployConf{
-			ProjectNameHashMode: "rolling_only",
+			ProjectNameHashMode:         "rolling_only",
 			RollingHealthTimeoutSeconds: 300,
-			RollingHealthRetries: 1,
+			RollingHealthRetries:        1,
+			SelfHeal: types.SelfHealConf{
+				Enable:   true,
+				MaxRetry: 0,
+			},
 			GitHubDeployments: types.GitHubDeploymentsConf{
 				Enable:      true,
 				Environment: "production",
@@ -88,6 +92,10 @@ func Load() (*types.Config, error) {
 
 	if config.Deploy.RollingHealthRetries <= 0 {
 		config.Deploy.RollingHealthRetries = 1
+	}
+
+	if config.Deploy.SelfHeal.MaxRetry < 0 {
+		config.Deploy.SelfHeal.MaxRetry = 0
 	}
 
 	// Normalize repository path - ensure it points to 'apps' directory

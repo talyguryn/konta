@@ -2,12 +2,12 @@ package types
 
 // Config represents the konta configuration
 type Config struct {
-	Version       string         `yaml:"version"`
-	Repository    RepositoryConf `yaml:"repository"`
-	Deploy        DeployConf     `yaml:"deploy,omitempty"`
-	Hooks         HooksConf      `yaml:"hooks,omitempty"`
-	Logging       LoggingConf    `yaml:"logging,omitempty"`
-	KontaUpdates  string         `yaml:"konta_updates,omitempty"` // auto, notify (default), false
+	Version      string         `yaml:"version"`
+	Repository   RepositoryConf `yaml:"repository"`
+	Deploy       DeployConf     `yaml:"deploy,omitempty"`
+	Hooks        HooksConf      `yaml:"hooks,omitempty"`
+	Logging      LoggingConf    `yaml:"logging,omitempty"`
+	KontaUpdates string         `yaml:"konta_updates,omitempty"` // auto, notify (default), false
 }
 
 // RepositoryConf represents git repository configuration
@@ -15,19 +15,25 @@ type RepositoryConf struct {
 	URL      string `yaml:"url"`
 	Branch   string `yaml:"branch"`
 	Token    string `yaml:"token"`
-	Path     string `yaml:"path"` // Path to base directory containing 'apps' folder (or just empty/. for repo root)
+	Path     string `yaml:"path"`     // Path to base directory containing 'apps' folder (or just empty/. for repo root)
 	Interval int    `yaml:"interval"` // seconds
 }
 
 // DeployConf represents deployment configuration
 type DeployConf struct {
-	Parallel          bool                  `yaml:"parallel,omitempty"`
-	DryRun            bool                  `yaml:"dry_run,omitempty"`
-	ProjectNameHashMode string              `yaml:"project_name_hash_mode,omitempty"` // rolling_only (default), all, none
-	RollingHealthTimeoutSeconds int         `yaml:"rolling_health_timeout_second,omitempty"` // default: 300
-	RollingHealthRetries int                `yaml:"rolling_health_retries,omitempty"` // default: 1
-	GitHubDeployments GitHubDeploymentsConf `yaml:"github_deployments,omitempty"`
+	Parallel                    bool                  `yaml:"parallel,omitempty"`
+	DryRun                      bool                  `yaml:"dry_run,omitempty"`
+	ProjectNameHashMode         string                `yaml:"project_name_hash_mode,omitempty"`        // rolling_only (default), all, none
+	RollingHealthTimeoutSeconds int                   `yaml:"rolling_health_timeout_second,omitempty"` // default: 300
+	RollingHealthRetries        int                   `yaml:"rolling_health_retries,omitempty"`        // default: 1
+	SelfHeal                    SelfHealConf          `yaml:"self_heal,omitempty"`
+	GitHubDeployments           GitHubDeploymentsConf `yaml:"github_deployments,omitempty"`
 	// RemoveOrphans is always enabled by default to keep disk space clean
+}
+
+type SelfHealConf struct {
+	Enable   bool `yaml:"enable,omitempty"`    // default: true
+	MaxRetry int  `yaml:"max_retry,omitempty"` // default: 0 (no limit)
 }
 
 type GitHubDeploymentsConf struct {
@@ -37,49 +43,50 @@ type GitHubDeploymentsConf struct {
 
 // HooksConf represents hooks configuration
 type HooksConf struct {
-	Started    string `yaml:"started,omitempty"`     // Just filename: started.sh (found in hooks dir)
-	Pre        string `yaml:"pre,omitempty"`        // Just filename: pre.sh (found in hooks dir)
-	Success    string `yaml:"success,omitempty"`    // Just filename: success.sh (found in hooks dir)
-	Failure    string `yaml:"failure,omitempty"`    // Just filename: failure.sh (found in hooks dir)
-	PostUpdate string `yaml:"post_update,omitempty"` // Just filename: post_update.sh (found in hooks dir)
-	StartedAbs string `yaml:"-"` // Absolute path to started hook (set by config loader)
-	PreAbs     string `yaml:"-"` // Absolute path to pre hook (set by config loader)
-	SuccessAbs string `yaml:"-"` // Absolute path to success hook
-	FailureAbs string `yaml:"-"` // Absolute path to failure hook
-	PostUpdateAbs string `yaml:"-"` // Absolute path to post_update hook
+	Started       string `yaml:"started,omitempty"`     // Just filename: started.sh (found in hooks dir)
+	Pre           string `yaml:"pre,omitempty"`         // Just filename: pre.sh (found in hooks dir)
+	Success       string `yaml:"success,omitempty"`     // Just filename: success.sh (found in hooks dir)
+	Failure       string `yaml:"failure,omitempty"`     // Just filename: failure.sh (found in hooks dir)
+	PostUpdate    string `yaml:"post_update,omitempty"` // Just filename: post_update.sh (found in hooks dir)
+	StartedAbs    string `yaml:"-"`                     // Absolute path to started hook (set by config loader)
+	PreAbs        string `yaml:"-"`                     // Absolute path to pre hook (set by config loader)
+	SuccessAbs    string `yaml:"-"`                     // Absolute path to success hook
+	FailureAbs    string `yaml:"-"`                     // Absolute path to failure hook
+	PostUpdateAbs string `yaml:"-"`                     // Absolute path to post_update hook
 }
 
 // LoggingConf represents logging configuration
 type LoggingConf struct {
-	Level  string `yaml:"level,omitempty"` // debug, info, warn, error
+	Level  string `yaml:"level,omitempty"`  // debug, info, warn, error
 	Format string `yaml:"format,omitempty"` // text, json
 	File   string `yaml:"file,omitempty"`
 }
 
 // State represents deployment state
 type State struct {
-	LastCommit           string                 `json:"last_commit"`
-	LastDeployTime       string                 `json:"last_deploy_time"`
-	LastAttemptedCommit  string                 `json:"last_attempted_commit,omitempty"`
-	LastAttemptStatus    string                 `json:"last_attempt_status,omitempty"` // in_progress, success, failure
-	LastAttemptTime      string                 `json:"last_attempt_time,omitempty"`
-	Version              string                 `json:"version"`
-	Projects             map[string]ProjectState `json:"projects,omitempty"` // Per-project state for change detection
+	LastCommit          string                  `json:"last_commit"`
+	LastDeployTime      string                  `json:"last_deploy_time"`
+	LastAttemptedCommit string                  `json:"last_attempted_commit,omitempty"`
+	LastAttemptStatus   string                  `json:"last_attempt_status,omitempty"` // in_progress, success, failure
+	LastAttemptTime     string                  `json:"last_attempt_time,omitempty"`
+	Version             string                  `json:"version"`
+	Projects            map[string]ProjectState `json:"projects,omitempty"` // Per-project state for change detection
 }
 
 // ProjectState represents the state of an individual project
 type ProjectState struct {
-	LastCommit     string `json:"last_commit"`      // Last commit that affected this project
-	LastDeployTime string `json:"last_deploy_time"` // When this project was last deployed
-	ActiveStack    string `json:"active_stack,omitempty"` // Active docker compose project name
-	ActiveCommit   string `json:"active_commit,omitempty"` // Active commit for project stack
+	LastCommit       string `json:"last_commit"`                  // Last commit that affected this project
+	LastDeployTime   string `json:"last_deploy_time"`             // When this project was last deployed
+	ActiveStack      string `json:"active_stack,omitempty"`       // Active docker compose project name
+	ActiveCommit     string `json:"active_commit,omitempty"`      // Active commit for project stack
+	SelfHealAttempts int    `json:"self_heal_attempts,omitempty"` // Count of self-heal actions for current rollout lifecycle
 }
 
 // ReconcileResult represents the result of a reconciliation operation
 type ReconcileResult struct {
-	Updated []string `json:"updated"` // Projects that were updated
-	Added   []string `json:"added"`   // Projects that were newly added
-	Removed []string `json:"removed"` // Projects that were removed
-	Started []string `json:"started"` // Projects that were restarted
+	Updated []string `json:"updated"`          // Projects that were updated
+	Added   []string `json:"added"`            // Projects that were newly added
+	Removed []string `json:"removed"`          // Projects that were removed
+	Started []string `json:"started"`          // Projects that were restarted
 	Failed  string   `json:"failed,omitempty"` // Project that failed during reconcile, if any
 }

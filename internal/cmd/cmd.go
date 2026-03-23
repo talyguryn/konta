@@ -228,9 +228,13 @@ func Bootstrap(args []string) error {
 			Interval: interval,
 		},
 		Deploy: types.DeployConf{
-			ProjectNameHashMode: "rolling_only",
+			ProjectNameHashMode:         "rolling_only",
 			RollingHealthTimeoutSeconds: 300,
-			RollingHealthRetries: 1,
+			RollingHealthRetries:        1,
+			SelfHeal: types.SelfHealConf{
+				Enable:   true,
+				MaxRetry: 0,
+			},
 			GitHubDeployments: types.GitHubDeploymentsConf{
 				Enable:      true,
 				Environment: "production",
@@ -339,9 +343,13 @@ func installInteractive() error {
 			Interval: interval,
 		},
 		Deploy: types.DeployConf{
-			ProjectNameHashMode: "rolling_only",
+			ProjectNameHashMode:         "rolling_only",
 			RollingHealthTimeoutSeconds: 300,
-			RollingHealthRetries: 1,
+			RollingHealthRetries:        1,
+			SelfHeal: types.SelfHealConf{
+				Enable:   true,
+				MaxRetry: 0,
+			},
 			GitHubDeployments: types.GitHubDeploymentsConf{
 				Enable:      true,
 				Environment: "production",
@@ -595,8 +603,8 @@ type githubRelease struct {
 
 type githubRateLimit struct {
 	Rate struct {
-		Limit     int `json:"limit"`
-		Remaining int `json:"remaining"`
+		Limit     int   `json:"limit"`
+		Remaining int   `json:"remaining"`
 		Reset     int64 `json:"reset"`
 	} `json:"rate"`
 }
@@ -649,7 +657,7 @@ func formatRateLimitReset(resetTime int64) string {
 func buildGitHubErrorMessage(statusCode int, body []byte) string {
 	// Parse GitHub API error response if available
 	var apiError struct {
-		Message string `json:"message"`
+		Message       string `json:"message"`
 		Documentation string `json:"documentation_url"`
 	}
 	if err := json.Unmarshal(body, &apiError); err == nil && apiError.Message != "" {
