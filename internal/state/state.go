@@ -299,6 +299,30 @@ func ResetProjectSelfHealAttempts(project string) error {
 	return Save(currentState)
 }
 
+// SetProjectLastCommit updates the deployed commit marker for a project.
+func SetProjectLastCommit(project string, commit string) error {
+	commit = strings.TrimSpace(commit)
+	if project == "" || commit == "" {
+		return nil
+	}
+
+	currentState, err := Load()
+	if err != nil {
+		return err
+	}
+
+	if currentState.Projects == nil {
+		currentState.Projects = make(map[string]types.ProjectState)
+	}
+
+	projectState := currentState.Projects[project]
+	projectState.LastCommit = commit
+	projectState.LastDeployTime = time.Now().Format("2006-01-02 15:04:05")
+	currentState.Projects[project] = projectState
+
+	return Save(currentState)
+}
+
 // GetStateDir returns the state directory
 func GetStateDir() string {
 	return getStateDir()

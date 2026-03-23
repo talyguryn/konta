@@ -187,11 +187,12 @@ func (r *Reconciler) HealthCheck() ([]string, error) {
 	// Also recover projects whose containers were fully removed (e.g. a rolling
 	// stack wiped by a previous bug or manual intervention).
 	for _, project := range desired {
-		expectedCommit, hasProjectCommit, err := r.resolveExpectedCommitForProject(project)
+		expectedCommit, targetSource, syncStateAfterHeal, err := r.resolveExpectedCommitForProject(project)
 		if err != nil {
 			logger.Warn("Failed to resolve expected commit for project %s: %v", project, err)
 			expectedCommit = r.deployCommit
-			hasProjectCommit = false
+			targetSource = "current fallback (resolver error)"
+			syncStateAfterHeal = false
 		}
 
 		projectAppsDir := r.appsDirForCommit(expectedCommit)
@@ -201,10 +202,6 @@ func (r *Reconciler) HealthCheck() ([]string, error) {
 			continue
 		}
 
-		targetSource := "current fallback"
-		if hasProjectCommit {
-			targetSource = "project state"
-		}
 		logger.Debug("Health check target for project %s: stack=%s commit=%s source=%s", project, targetProjectName, shortCommitFrom(expectedCommit), targetSource)
 
 		// Fully missing → full reconcile (handles rolling naming correctly)
@@ -218,7 +215,7 @@ func (r *Reconciler) HealthCheck() ([]string, error) {
 			if err := r.reconcileProjectWithContext(project, expectedCommit, projectAppsDir); err != nil {
 				logger.Warn("Failed to restore project %s: %v", project, err)
 			} else {
-				r.resetSelfHealAttemptsAfterSuccess(project)
+				r.finalizeSelfHealSuccess(project, expectedCommit, syncStateAfterHeal)
 				startedProjects = append(startedProjects, project)
 			}
 			continue
@@ -241,7 +238,7 @@ func (r *Reconciler) HealthCheck() ([]string, error) {
 				logger.Warn("Failed to start project %s: %v", project, err)
 				// Don't return error, just warn - let other projects continue
 			} else {
-				r.resetSelfHealAttemptsAfterSuccess(project)
+				r.finalizeSelfHealSuccess(project, expectedCommit, syncStateAfterHeal)
 				startedProjects = append(startedProjects, project)
 			}
 			continue
@@ -263,13 +260,13 @@ func (r *Reconciler) HealthCheck() ([]string, error) {
 			if err := r.reconcileProjectWithContext(project, expectedCommit, projectAppsDir); err != nil {
 				logger.Warn("Failed to recover unhealthy project %s: %v", project, err)
 			} else {
-				r.resetSelfHealAttemptsAfterSuccess(project)
+				r.finalizeSelfHealSuccess(project, expectedCommit, syncStateAfterHeal)
 				startedProjects = append(startedProjects, project)
 			}
 			continue
 		}
 
-		hasDrift, driftReason, err := r.hasDeploymentDrift(project, expectedCommit, hasProjectCommit, projectAppsDir)
+		hasDrift, driftReason, err := r.hasDeploymentDrift(project, expectedCommit, projectAppsDir)
 		if err != nil {
 			logger.Warn("Failed to check deployment drift for project %s: %v", project, err)
 			continue
@@ -285,7 +282,7 @@ func (r *Reconciler) HealthCheck() ([]string, error) {
 			if err := r.reconcileProjectWithContext(project, expectedCommit, projectAppsDir); err != nil {
 				logger.Warn("Failed to recover drifted project %s: %v", project, err)
 			} else {
-				r.resetSelfHealAttemptsAfterSuccess(project)
+				r.finalizeSelfHealSuccess(project, expectedCommit, syncStateAfterHeal)
 				startedProjects = append(startedProjects, project)
 			}
 			continue
@@ -355,6 +352,20 @@ func (r *Reconciler) resetSelfHealAttemptsAfterSuccess(project string) {
 	if err := state.ResetProjectSelfHealAttempts(project); err != nil {
 		logger.Warn("Failed to reset self-heal attempts for project %s: %v", project, err)
 	}
+}
+
+func (r *Reconciler) finalizeSelfHealSuccess(project string, expectedCommit string, syncState bool) {
+	r.resetSelfHealAttemptsAfterSuccess(project)
+	if !syncState {
+		return
+	}
+
+	if err := state.SetProjectLastCommit(project, expectedCommit); err != nil {
+		logger.Warn("Failed to sync project state after self-heal for %s: %v", project, err)
+		return
+	}
+
+	logger.Info("Updated project state after self-heal: %s -> %s", project, shortCommitFrom(expectedCommit))
 }
 
 // CleanupOrphans removes Konta-managed containers that are no longer in the apps configuration
@@ -984,18 +995,46 @@ func shortCommitFrom(commit string) string {
 	return commit
 }
 
-func (r *Reconciler) resolveExpectedCommitForProject(project string) (string, bool, error) {
+func (r *Reconciler) resolveExpectedCommitForProject(project string) (string, string, bool, error) {
 	projectCommit, err := state.GetProjectLastCommit(project)
 	if err != nil {
-		return "", false, err
+		return "", "", false, err
 	}
 
 	projectCommit = strings.TrimSpace(projectCommit)
-	if projectCommit != "" {
-		return projectCommit, true, nil
+	currentCommit := strings.TrimSpace(r.deployCommit)
+	mode := strings.ToLower(strings.TrimSpace(r.config.Deploy.SelfHeal.RecoveryMode))
+	if mode == "" {
+		mode = "state"
 	}
 
-	return strings.TrimSpace(r.deployCommit), false, nil
+	switch mode {
+	case "current":
+		syncState := projectCommit == "" || projectCommit != currentCommit
+		return currentCommit, "current release", syncState, nil
+	case "current_on_missing":
+		if projectCommit == "" {
+			return currentCommit, "current_on_missing (no project state)", true, nil
+		}
+
+		projectAppsDir := r.appsDirForCommit(projectCommit)
+		stateTargetStack, _, stackErr := r.resolveTargetProjectName(project, projectCommit, projectAppsDir)
+		if stackErr != nil {
+			logger.Warn("Failed to resolve state target stack for project %s in current_on_missing mode: %v", project, stackErr)
+			return currentCommit, "current_on_missing (state target resolve failed)", true, nil
+		}
+
+		if r.hasAnyContainersForStack(stateTargetStack) {
+			return projectCommit, "project state", false, nil
+		}
+
+		return currentCommit, "current_on_missing (state stack missing)", true, nil
+	default:
+		if projectCommit != "" {
+			return projectCommit, "project state", false, nil
+		}
+		return currentCommit, "current fallback (no project state)", false, nil
+	}
 }
 
 func (r *Reconciler) appsDirForCommit(commit string) string {
@@ -1030,7 +1069,7 @@ func (r *Reconciler) resolveTargetProjectName(project string, deployCommit strin
 	return project, projectShortCommit, nil
 }
 
-func (r *Reconciler) expectedStackName(project string, expectedCommit string, hasProjectCommit bool, useHashName bool, stacks []string) string {
+func (r *Reconciler) expectedStackName(project string, expectedCommit string, useHashName bool, stacks []string) string {
 	if !useHashName {
 		return project
 	}
@@ -1045,7 +1084,7 @@ func (r *Reconciler) expectedStackName(project string, expectedCommit string, ha
 
 func (r *Reconciler) disableOutdatedManagedStacks(desired []string) error {
 	for _, project := range desired {
-		expectedCommit, hasProjectCommit, err := r.resolveExpectedCommitForProject(project)
+		expectedCommit, _, _, err := r.resolveExpectedCommitForProject(project)
 		if err != nil {
 			logger.Warn("Failed to resolve expected commit for stale stack cleanup on project %s: %v", project, err)
 			continue
@@ -1066,7 +1105,7 @@ func (r *Reconciler) disableOutdatedManagedStacks(desired []string) error {
 			continue
 		}
 
-		expectedStack := r.expectedStackName(project, expectedCommit, hasProjectCommit, useHashName, stacks)
+		expectedStack := r.expectedStackName(project, expectedCommit, useHashName, stacks)
 		if expectedStack == "" {
 			continue
 		}
@@ -1579,7 +1618,7 @@ func sameStringSet(a []string, b []string) bool {
 	return true
 }
 
-func (r *Reconciler) hasDeploymentDrift(project string, expectedCommit string, hasProjectCommit bool, appsDir string) (bool, string, error) {
+func (r *Reconciler) hasDeploymentDrift(project string, expectedCommit string, appsDir string) (bool, string, error) {
 	composePath := filepath.Join(appsDir, project, "docker-compose.yml")
 	rollingEnabled, err := r.composeHasLabel(composePath, "konta.rolling=true")
 	if err != nil {
@@ -1592,7 +1631,7 @@ func (r *Reconciler) hasDeploymentDrift(project string, expectedCommit string, h
 		return false, "", err
 	}
 
-	expectedStack := r.expectedStackName(project, expectedCommit, hasProjectCommit, useHashName, stacks)
+	expectedStack := r.expectedStackName(project, expectedCommit, useHashName, stacks)
 	if useHashName && expectedStack == "" {
 		shortCommit := shortCommitFrom(expectedCommit)
 		if shortCommit == "" {

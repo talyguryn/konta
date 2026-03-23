@@ -57,8 +57,9 @@ func Load() (*types.Config, error) {
 			RollingHealthTimeoutSeconds: 300,
 			RollingHealthRetries:        1,
 			SelfHeal: types.SelfHealConf{
-				Enable:   true,
-				MaxRetry: 0,
+				Enable:       true,
+				MaxRetry:     0,
+				RecoveryMode: "state",
 			},
 			GitHubDeployments: types.GitHubDeploymentsConf{
 				Enable:      true,
@@ -96,6 +97,17 @@ func Load() (*types.Config, error) {
 
 	if config.Deploy.SelfHeal.MaxRetry < 0 {
 		config.Deploy.SelfHeal.MaxRetry = 0
+	}
+
+	mode := strings.ToLower(strings.TrimSpace(config.Deploy.SelfHeal.RecoveryMode))
+	switch mode {
+	case "", "state":
+		config.Deploy.SelfHeal.RecoveryMode = "state"
+	case "current_on_missing", "current":
+		config.Deploy.SelfHeal.RecoveryMode = mode
+	default:
+		logger.Warn("Invalid deploy.self_heal.recovery_mode=%q, using default 'state'", config.Deploy.SelfHeal.RecoveryMode)
+		config.Deploy.SelfHeal.RecoveryMode = "state"
 	}
 
 	// Normalize repository path - ensure it points to 'apps' directory

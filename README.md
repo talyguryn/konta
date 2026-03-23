@@ -320,6 +320,10 @@ repository:
 # self_heal controls automatic recovery during no-change health checks.
 # enable=true (default) allows auto-reconcile when drift/unhealthy/missing containers are detected.
 # max_retry limits self-heal attempts per project (0 = no limit).
+# recovery_mode controls which commit self-heal restores:
+# - state (default): restore project from commit stored in state.json
+# - current_on_missing: use state commit when expected stack exists, otherwise restore from current release and sync state
+# - current: always restore from current release and sync state
 # github_deployments enables built-in GitHub Deployment statuses, commit statuses,
 # and failure comments on the failed commit with reason + compare link.
 # Uses repository.url + repository.token. The environment defaults to production.
@@ -330,6 +334,7 @@ deploy:
   self_heal:
     enable: true
     max_retry: 0
+    recovery_mode: state
   github_deployments:
     enable: true
     environment: production
