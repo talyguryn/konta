@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/talyguryn/konta/internal/logger"
@@ -245,6 +246,30 @@ func IncrementProjectSelfHealAttempts(project string) (int, error) {
 	}
 
 	return projectState.SelfHealAttempts, nil
+}
+
+// GetProjectLastCommit returns the last known deployed commit for a project.
+func GetProjectLastCommit(project string) (string, error) {
+	currentState, err := Load()
+	if err != nil {
+		return "", err
+	}
+
+	if currentState.Projects == nil {
+		return "", nil
+	}
+
+	projectState, ok := currentState.Projects[project]
+	if !ok {
+		return "", nil
+	}
+
+	commit := strings.TrimSpace(projectState.LastCommit)
+	if commit != "" {
+		return commit, nil
+	}
+
+	return strings.TrimSpace(projectState.ActiveCommit), nil
 }
 
 // GetStateDir returns the state directory
