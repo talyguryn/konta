@@ -16,6 +16,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       changed: ${{ steps.version.outputs.changed }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -26,6 +27,14 @@ jobs:
         run: |
           CURRENT=$(grep 'const Version = ' cmd/konta/main.go | grep -oP '"\s*\K[^"]+')
           echo "version=${CURRENT}" >> $GITHUB_OUTPUT
+
+          if [[ "${CURRENT}" == *"-"* ]]; then
+            echo "prerelease=true" >> $GITHUB_OUTPUT
+            echo "Release channel: next (prerelease)"
+          else
+            echo "prerelease=false" >> $GITHUB_OUTPUT
+            echo "Release channel: stable"
+          fi
 
           # Check if version changed compared to previous commit
           if git show HEAD~1:cmd/konta/main.go 2>/dev/null | grep -q "const Version = \"${CURRENT}\""; then
@@ -79,9 +88,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ needs.check-version.outputs.version }}
-          name: Konta v${{ needs.check-version.outputs.version }}
+          name: ${{ needs.check-version.outputs.prerelease == 'true' && format('Konta v{0} (next)', needs.check-version.outputs.version) || format('Konta v{0}', needs.check-version.outputs.version) }}
           draft: false
-          prerelease: false
+          prerelease: ${{ needs.check-version.outputs.prerelease == 'true' }}
           body: |
             ## Konta v${{ needs.check-version.outputs.version }}
 

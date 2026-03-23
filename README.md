@@ -181,6 +181,7 @@ Shortest form with default values:
 - `--path .`
 - `--interval 120`
 - `--konta_updates notify`
+- `--release_channel stable`
 
 ```bash
 sudo konta bootstrap \
@@ -188,7 +189,8 @@ sudo konta bootstrap \
   --branch main \
   --path vps0/apps \
   --interval 120 \
-  --konta_updates notify
+  --konta_updates notify \
+  --release_channel stable
 ```
 
 #### Using private repositories
@@ -275,7 +277,7 @@ Single run:
 Service commands:
 
 - `konta journal (-j)` — View the Konta logs in real-time. This is useful for monitoring deployments and troubleshooting issues.
-- `konta update` — Check for updates to Konta itself. If a new version is available, it will prompt you to install it. Use `-y` to auto-confirm updates (safe minor versions only).
+- `konta update` — Check for updates to Konta itself. If a new version is available, it will prompt you to install it. Use `-y` to auto-confirm updates (safe minor versions only). Use `--channel next` for experimental prerelease updates.
 - `konta version (-v)` — Show the current version of Konta.
 - `konta help (-h)` — Show help information about commands and usage.
 - `konta config [-e]` — View the current configuration settings. Use `-e` to edit the configuration file directly with nano.
@@ -344,6 +346,11 @@ logging:
 # Update behavior for Konta itself. By default with `notify`, it will log when updates are available, and you can choose when to update. If set to 'auto', Konta will automatically check for updates and install them (safe minor versions only). Set to 'false' or omit to disable update checks entirely.
 konta_updates: notify
 
+# Konta release channel used by update checks and `konta update` by default.
+# - stable (default): stable releases from /releases/latest
+# - next: latest prerelease builds for experiments/testing
+release_channel: stable
+
 # Optional. You can redefine hooks paths here if you want to use different names or locations for your hook scripts. By default, Konta looks for scripts in the `{path}/hooks/` directory of your repository.
 hooks:
   pre: pre.sh
@@ -373,11 +380,22 @@ You can check updates manually with command. If the new version is available, ko
 konta update
 ```
 
-Also konta can check for updates to itself and manage the update process. This is controlled by the `konta_updates` configuration option.
+To pull experimental prereleases explicitly:
+
+```bash
+konta update --channel next
+```
+
+Also konta can check for updates to itself and manage the update process. This is controlled by the `konta_updates` and `release_channel` configuration options.
 
 - `auto` — Check for updates and auto-install (safe minor versions only)
 - `notify` (default) — Log when updates available, user decides when to update
 - `false` or omit — Disable update checks entirely
+
+Release channels:
+
+- `stable` (default) — stable release line for production
+- `next` — prerelease line for experiments and feature testing
 
 When an update is available, Konta will log a message with the new version. If `auto` mode is enabled, it will attempt to download and install the update automatically. The update process is designed to be safe and will only auto-install minor versions to avoid breaking changes.
 

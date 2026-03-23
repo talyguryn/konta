@@ -68,6 +68,7 @@ func Load() (*types.Config, error) {
 		Logging: types.LoggingConf{
 			Level: "info",
 		},
+		ReleaseChannel: "stable",
 	}
 
 	if err := yaml.Unmarshal(data, config); err != nil {
@@ -80,6 +81,17 @@ func Load() (*types.Config, error) {
 	}
 	if config.Repository.URL == "" {
 		return nil, fmt.Errorf("repository.url is required")
+	}
+
+	channel := strings.ToLower(strings.TrimSpace(config.ReleaseChannel))
+	switch channel {
+	case "", "stable":
+		config.ReleaseChannel = "stable"
+	case "next":
+		config.ReleaseChannel = "next"
+	default:
+		logger.Warn("Invalid release_channel=%q, using default 'stable'", config.ReleaseChannel)
+		config.ReleaseChannel = "stable"
 	}
 
 	if strings.TrimSpace(config.Deploy.ProjectNameHashMode) == "" {

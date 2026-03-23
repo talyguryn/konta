@@ -9,7 +9,7 @@ import (
 	"github.com/talyguryn/konta/internal/logger"
 )
 
-const Version = "0.3.28"
+const Version = "0.3.29"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -48,13 +48,19 @@ func main() {
 	case "update":
 		args := os.Args[2:]
 		forceYes := false
+		releaseChannel := ""
 		for _, arg := range args {
 			if arg == "-y" || arg == "--yes" {
 				forceYes = true
-				break
 			}
 		}
-		if err := cmd.Update(Version, forceYes); err != nil {
+		for i := 0; i < len(args); i++ {
+			if args[i] == "--channel" && i+1 < len(args) {
+				releaseChannel = args[i+1]
+				i++
+			}
+		}
+		if err := cmd.Update(Version, forceYes, releaseChannel); err != nil {
 			fmt.Printf("Error: %v\n", err)
 			os.Exit(1)
 		}

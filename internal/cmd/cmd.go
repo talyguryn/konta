@@ -58,6 +58,7 @@ Bootstrap Options:
   --branch BRANCH                   Git branch (default: main)
   --interval SECONDS                Polling interval (default: 120)
   --token TOKEN                     GitHub token (or set KONTA_TOKEN env)
+	--release_channel stable|next     Konta release channel for updates (default: stable)
 
 Short flags:
   -h, --help                        Show this help
@@ -68,7 +69,8 @@ Short flags:
   -j                                Show live logs (same as 'journal')
 
 Update flags:
-  -y                                Skip confirmation and auto-update
+	-y                                Skip confirmation and auto-update
+	--channel stable|next             Override release channel for this update command
 
 Examples:
   konta bootstrap                     # Interactive setup
@@ -85,7 +87,8 @@ Examples:
   konta journal                     # View live logs
   konta journal -f                  # Same as 'konta journal'
   konta update                      # Update to latest version (interactive)
-  konta update -y                   # Update without confirmation
+	konta update -y                   # Update without confirmation
+	konta update --channel next       # Update from experimental next channel
 
 Environment:
   KONTA_TOKEN                       GitHub token (alternative to --token)
@@ -128,18 +131,19 @@ func Config(edit bool) error {
 }
 
 // Bootstrap performs first-time setup with optional CLI parameters
-// Usage: konta bootstrap [--repo URL] [--path PATH] [--branch BRANCH] [--interval SECONDS] [--token TOKEN] [--konta_updates auto|notify|false]
+// Usage: konta bootstrap [--repo URL] [--path PATH] [--branch BRANCH] [--interval SECONDS] [--token TOKEN] [--konta_updates auto|notify|false] [--release_channel stable|next]
 func Bootstrap(args []string) error {
 	logger.Info("Starting Konta bootstrap")
 
 	// Parse command-line arguments
 	var (
-		repoURL      string
-		branch       string
-		appsPath     string
-		interval     int
-		token        string
-		kontaUpdates string
+		repoURL        string
+		branch         string
+		appsPath       string
+		interval       int
+		token          string
+		kontaUpdates   string
+		releaseChannel string
 	)
 
 	// Parse flags
@@ -177,6 +181,11 @@ func Bootstrap(args []string) error {
 				kontaUpdates = args[i+1]
 				i++
 			}
+		case "--release_channel":
+			if i+1 < len(args) {
+				releaseChannel = args[i+1]
+				i++
+			}
 		}
 	}
 
@@ -197,6 +206,13 @@ func Bootstrap(args []string) error {
 	}
 	if kontaUpdates == "" {
 		kontaUpdates = "notify"
+	}
+	if releaseChannel == "" {
+		releaseChannel = "stable"
+	}
+	releaseChannel = strings.ToLower(strings.TrimSpace(releaseChannel))
+	if releaseChannel != "stable" && releaseChannel != "next" {
+		releaseChannel = "stable"
 	}
 
 	// Get token from environment if not provided via CLI
@@ -243,7 +259,8 @@ func Bootstrap(args []string) error {
 		Logging: types.LoggingConf{
 			Level: "info",
 		},
-		KontaUpdates: kontaUpdates,
+		ReleaseChannel: releaseChannel,
+		KontaUpdates:   kontaUpdates,
 	}
 
 	// Initialize directories
@@ -270,6 +287,7 @@ func Bootstrap(args []string) error {
 	fmt.Printf("  Base path:  %s\n", appsPath)
 	fmt.Printf("  Interval:   %d seconds\n", interval)
 	fmt.Printf("  Auto-update: %s\n", kontaUpdates)
+	fmt.Printf("  Release channel: %s\n", releaseChannel)
 
 	fmt.Println()
 	fmt.Println("Starting daemon...")
@@ -326,6 +344,16 @@ func installInteractive() error {
 	if kontaUpdates == "" {
 		kontaUpdates = "notify"
 	}
+	fmt.Print("Release channel [stable/next] [stable]: ")
+	releaseChannel, _ := reader.ReadString('\n')
+	releaseChannel = strings.ToLower(strings.TrimSpace(releaseChannel))
+	if releaseChannel == "" {
+		releaseChannel = "stable"
+	}
+	if releaseChannel != "stable" && releaseChannel != "next" {
+		releaseChannel = "stable"
+		fmt.Printf("Invalid channel, using default: %s\n", releaseChannel)
+	}
 	// Validate update setting
 	if kontaUpdates != "auto" && kontaUpdates != "notify" && kontaUpdates != "false" {
 		kontaUpdates = "notify"
@@ -358,7 +386,8 @@ func installInteractive() error {
 		Logging: types.LoggingConf{
 			Level: "info",
 		},
-		KontaUpdates: kontaUpdates,
+		ReleaseChannel: releaseChannel,
+		KontaUpdates:   kontaUpdates,
 	}
 
 	// Initialize directories
@@ -561,13 +590,15 @@ func Journal() error {
 // Update checks for and installs the latest version from GitHub
 // CheckForUpdates checks if a new version is available without updating
 // Used during watch mode to notify user of available updates
-func CheckForUpdates(currentVersion string, updateBehavior string) error {
+func CheckForUpdates(currentVersion string, updateBehavior string, releaseChannel string) error {
 	// Skip if updates are disabled
 	if updateBehavior == "false" || updateBehavior == "" {
 		return nil
 	}
 
-	release, err := fetchLatestRelease()
+	releaseChannel = normalizeReleaseChannel(releaseChannel)
+
+	release, err := fetchLatestRelease(releaseChannel)
 	if err != nil {
 		logger.Debug("Failed to check for updates: %v", err)
 		return nil // Don't fail on update check errors
@@ -579,7 +610,7 @@ func CheckForUpdates(currentVersion string, updateBehavior string) error {
 	}
 
 	if updateBehavior == "notify" {
-		logger.Info("New Konta version available: v%s (current: v%s). Run 'konta update' to install.", latestVersion, currentVersion)
+		logger.Info("New Konta version available on %s channel: v%s (current: v%s). Run 'konta update' to install.", releaseChannel, latestVersion, currentVersion)
 		return nil
 	}
 
@@ -698,7 +729,66 @@ func buildGitHubErrorMessage(statusCode int, body []byte) string {
 	}
 }
 
-func fetchLatestRelease() (*githubRelease, error) {
+func fetchLatestPrerelease() (*githubRelease, error) {
+	resp, err := http.Get("https://api.github.com/repos/talyguryn/konta/releases?per_page=30")
+	if err != nil {
+		return nil, fmt.Errorf("Failed to connect to GitHub - %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("Failed to read response - %v", err)
+	}
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf(buildGitHubErrorMessage(resp.StatusCode, body))
+	}
+
+	var releases []struct {
+		TagName    string `json:"tag_name"`
+		Prerelease bool   `json:"prerelease"`
+		Draft      bool   `json:"draft"`
+		Assets     []struct {
+			Name               string `json:"name"`
+			BrowserDownloadURL string `json:"browser_download_url"`
+		} `json:"assets"`
+	}
+
+	if err := json.Unmarshal(body, &releases); err != nil {
+		return nil, fmt.Errorf("Failed to parse release info")
+	}
+
+	for _, rel := range releases {
+		if rel.Draft || !rel.Prerelease {
+			continue
+		}
+
+		release := &githubRelease{TagName: rel.TagName}
+		for _, asset := range rel.Assets {
+			release.Assets = append(release.Assets, struct {
+				Name               string `json:"name"`
+				BrowserDownloadURL string `json:"browser_download_url"`
+			}{
+				Name:               asset.Name,
+				BrowserDownloadURL: asset.BrowserDownloadURL,
+			})
+		}
+		return release, nil
+	}
+
+	return nil, fmt.Errorf("No prerelease versions found on GitHub")
+}
+
+func fetchLatestRelease(channel string) (*githubRelease, error) {
+	if normalizeReleaseChannel(channel) == "next" {
+		return fetchLatestPrerelease()
+	}
+
+	return fetchLatestStableRelease()
+}
+
+func fetchLatestStableRelease() (*githubRelease, error) {
 	resp, err := http.Get("https://api.github.com/repos/talyguryn/konta/releases/latest")
 	if err != nil {
 		return nil, fmt.Errorf("Failed to connect to GitHub - %v", err)
@@ -720,6 +810,14 @@ func fetchLatestRelease() (*githubRelease, error) {
 	}
 
 	return &release, nil
+}
+
+func normalizeReleaseChannel(channel string) string {
+	channel = strings.ToLower(strings.TrimSpace(channel))
+	if channel != "next" {
+		return "stable"
+	}
+	return "next"
 }
 
 func getBinaryName() string {
@@ -868,12 +966,21 @@ func autoUpdate(currentVersion string, release *githubRelease) error {
 	return nil
 }
 
-func Update(currentVersion string, forceYes bool) error {
+func Update(currentVersion string, forceYes bool, releaseChannelOverride string) error {
 	fmt.Printf("Current version: v%s\n", currentVersion)
-	fmt.Println("Checking for updates from GitHub...")
+
+	releaseChannel := "stable"
+	if cfg, err := config.Load(); err == nil {
+		releaseChannel = normalizeReleaseChannel(cfg.ReleaseChannel)
+	}
+	if strings.TrimSpace(releaseChannelOverride) != "" {
+		releaseChannel = normalizeReleaseChannel(releaseChannelOverride)
+	}
+
+	fmt.Printf("Checking for updates from GitHub (channel: %s)...\n", releaseChannel)
 	fmt.Println()
 
-	release, err := fetchLatestRelease()
+	release, err := fetchLatestRelease(releaseChannel)
 	if err != nil {
 		return err
 	}
@@ -881,11 +988,11 @@ func Update(currentVersion string, forceYes bool) error {
 	latestVersion := strings.TrimPrefix(release.TagName, "v")
 
 	if latestVersion == currentVersion {
-		fmt.Println("✓ Already running the latest version!")
+		fmt.Printf("✓ Already running the latest version on %s channel!\n", releaseChannel)
 		return nil
 	}
 
-	fmt.Printf("🎉 New version available: v%s\n", latestVersion)
+	fmt.Printf("🎉 New version available on %s channel: v%s\n", releaseChannel, latestVersion)
 
 	if !forceYes {
 		fmt.Print("Download and install? [Y/n]: ")
@@ -988,7 +1095,7 @@ func Run(dryRun bool, watch bool, version string) error {
 
 		// Check for updates on first run
 		if cfg.KontaUpdates != "" && cfg.KontaUpdates != "false" {
-			_ = CheckForUpdates(version, cfg.KontaUpdates)
+			_ = CheckForUpdates(version, cfg.KontaUpdates, cfg.ReleaseChannel)
 		}
 
 		// First reconciliation already done above, now enter polling loop
@@ -1021,7 +1128,7 @@ func Run(dryRun bool, watch bool, version string) error {
 			checkCounter++
 			if checkCounter >= checkInterval && cfg.KontaUpdates != "" && cfg.KontaUpdates != "false" {
 				checkCounter = 0
-				_ = CheckForUpdates(version, cfg.KontaUpdates)
+				_ = CheckForUpdates(version, cfg.KontaUpdates, cfg.ReleaseChannel)
 			}
 
 			if err := reconcileOnce(false, version, false, false); err != nil {

@@ -15,6 +15,7 @@ NC='\033[0m' # No Color
 REPO="talyguryn/konta"
 INSTALL_DIR="/usr/local/bin"
 BINARY_NAME="konta"
+RELEASE_CHANNEL="${KONTA_RELEASE_CHANNEL:-stable}"
 
 print_info() {
     echo -e "${BLUE}ℹ${NC} $1" >&2
@@ -76,22 +77,54 @@ check_git() {
     return 1
 }
 
-# Get the latest release version (stdout only, no status messages)
-get_latest_version() {
-    version=$(curl -s "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name"' | head -1 | cut -d'"' -f4 2>/dev/null)
+# Parse installer arguments
+parse_args() {
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --channel)
+                if [ -n "$2" ]; then
+                    RELEASE_CHANNEL="$2"
+                    shift 2
+                    continue
+                fi
+                print_error "--channel requires a value: stable or next"
+                exit 1
+                ;;
+            *)
+                print_warning "Unknown argument ignored: $1"
+                shift
+                ;;
+        esac
+    done
 
-    if [ -z "$version" ]; then
-        echo "" # Return empty on error, main() will handle
+    RELEASE_CHANNEL=$(echo "$RELEASE_CHANNEL" | tr '[:upper:]' '[:lower:]')
+    if [ "$RELEASE_CHANNEL" != "stable" ] && [ "$RELEASE_CHANNEL" != "next" ]; then
+        print_warning "Invalid release channel '$RELEASE_CHANNEL', using 'stable'"
+        RELEASE_CHANNEL="stable"
+    fi
+}
+
+# Get release tag by channel (stdout only)
+get_release_tag() {
+    if [ "$RELEASE_CHANNEL" = "next" ]; then
+        json=$(curl -s "https://api.github.com/repos/${REPO}/releases?per_page=30")
+        tag=$(echo "$json" | tr -d '\n' | sed 's/},{/}\n{/g' | grep -m1 '"prerelease"[[:space:]]*:[[:space:]]*true' | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+    else
+        tag=$(curl -s "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name"' | head -1 | cut -d'"' -f4 2>/dev/null)
+    fi
+
+    if [ -z "$tag" ]; then
+        echo ""
         return 1
     fi
 
-    # Remove 'v' prefix if present
-    version="${version#v}"
-    echo "$version"
+    echo "$tag"
 }
 
 # Main installation
 main() {
+    parse_args "$@"
+
     print_info "Installing Konta GitOps"
     echo "" >&2
 
@@ -106,13 +139,14 @@ main() {
 
     print_success "Detected: $(uname -s) $(uname -m) ($OS/$ARCH)"
 
-    # Get latest version
-    print_info "Fetching latest version..."
-    VERSION=$(get_latest_version)
-    if [ -z "$VERSION" ]; then
-        print_error "Could not fetch latest version from GitHub"
+    # Get release tag/version by channel
+    print_info "Fetching latest version (channel: ${RELEASE_CHANNEL})..."
+    RELEASE_TAG=$(get_release_tag)
+    if [ -z "$RELEASE_TAG" ]; then
+        print_error "Could not fetch release from GitHub for channel '${RELEASE_CHANNEL}'"
         exit 1
     fi
+    VERSION="${RELEASE_TAG#v}"
     print_success "Latest version: v${VERSION}"
 
     # Check Docker and Docker Compose
@@ -156,7 +190,7 @@ main() {
             print_info "Installing Git..."
 
             if [ "$OS" = "linux" ]; then
-                if ! sudo apt-get update && sudo apt-get install -y git; then
+                if ! sudo apt-get update || ! sudo apt-get install -y git; then
                     print_error "Failed to install Git automatically"
                     exit 1
                 fi
@@ -190,11 +224,11 @@ main() {
         BINARY_FILE="konta-darwin-${ARCH}"
     fi
 
-    DOWNLOAD_URL="https://github.com/${REPO}/releases/download/v${VERSION}/${BINARY_FILE}"
+    DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${RELEASE_TAG}/${BINARY_FILE}"
 
     # Check if konta is already installed with the same version
     if [ -x "${INSTALL_DIR}/${BINARY_NAME}" ]; then
-        INSTALLED_VERSION=$("${INSTALL_DIR}/${BINARY_NAME}" --version 2>/dev/null | grep -oP 'v\K[0-9.]+' || echo "unknown")
+        INSTALLED_VERSION=$("${INSTALL_DIR}/${BINARY_NAME}" --version 2>/dev/null | grep -oE 'v[^[:space:]]+' | head -1 | sed 's/^v//' || echo "unknown")
         if [ "$INSTALLED_VERSION" = "$VERSION" ]; then
             print_success "Konta v${VERSION} is already installed at ${INSTALL_DIR}/${BINARY_NAME}"
             echo "" >&2
