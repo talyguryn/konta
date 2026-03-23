@@ -382,7 +382,7 @@ func (r *Reconciler) reconcileProject(project string) error {
 		if hasLegacyStack {
 			logger.Info("Restarting non-rolling project %s before compose up to free host-bound resources", project)
 			if !r.dryRun {
-				if err := r.downComposeProject(project, false); err != nil {
+				if err := r.downComposeProjectWithContext(project, composePath, filepath.Join(r.appsDir, project), false); err != nil {
 					return fmt.Errorf("failed to restart non-rolling project %s before compose up: %w", project, err)
 				}
 			}
@@ -449,25 +449,25 @@ func (r *Reconciler) reconcileProject(project string) error {
 	if rollingEnabled {
 		hasHealthcheck, err := r.composeHasHealthcheck(composePath)
 		if err != nil {
-			_ = r.downComposeProject(targetProjectName, true)
+			_ = r.downComposeProjectWithContext(targetProjectName, composePath, filepath.Join(r.appsDir, project), true)
 			return fmt.Errorf("failed to inspect healthcheck for rolling project %s: %w", project, err)
 		}
 
 		if !hasHealthcheck {
 			logger.Warn("Rolling deployment for project %s has no healthcheck defined. Verifying containers are stably running before cleanup. Consider adding a healthcheck for safer rolling deployments.", project)
 			if err := r.waitForProjectRunningWithRetries(targetProjectName, r.config.Deploy.RollingHealthTimeoutSeconds, r.config.Deploy.RollingHealthRetries); err != nil {
-				_ = r.downComposeProject(targetProjectName, true)
+				_ = r.downComposeProjectWithContext(targetProjectName, composePath, filepath.Join(r.appsDir, project), true)
 				return fmt.Errorf("rolling deployment runtime check failed for project %s: %w", project, err)
 			}
 		} else {
 			if err := r.waitForProjectHealthyWithRetries(targetProjectName, r.config.Deploy.RollingHealthTimeoutSeconds, r.config.Deploy.RollingHealthRetries); err != nil {
-				_ = r.downComposeProject(targetProjectName, true)
+				_ = r.downComposeProjectWithContext(targetProjectName, composePath, filepath.Join(r.appsDir, project), true)
 				return fmt.Errorf("rolling deployment healthcheck failed for project %s: %w", project, err)
 			}
 		}
 	}
 
-	if err := r.cleanupOldStacksForApp(project, targetProjectName); err != nil {
+	if err := r.cleanupOldStacksForApp(project, targetProjectName, composePath, filepath.Join(r.appsDir, project)); err != nil {
 		logger.Warn("Failed to cleanup old stacks for project %s: %v", project, err)
 	}
 
@@ -559,6 +559,9 @@ func (r *Reconciler) downProject(project string) error {
 }
 
 func (r *Reconciler) handleProjectModeMigration(baseProject string, targetProjectName string, rollingEnabled bool) error {
+	composePath := filepath.Join(r.appsDir, baseProject, "docker-compose.yml")
+	workDir := filepath.Join(r.appsDir, baseProject)
+
 	stacks, err := r.listStacksForApp(baseProject)
 	if err != nil {
 		return fmt.Errorf("failed to list existing stacks for project %s: %w", baseProject, err)
@@ -579,7 +582,7 @@ func (r *Reconciler) handleProjectModeMigration(baseProject string, targetProjec
 		if r.dryRun {
 			return nil
 		}
-		if err := r.downComposeProject(baseProject, false); err != nil {
+		if err := r.downComposeProjectWithContext(baseProject, composePath, workDir, false); err != nil {
 			return fmt.Errorf("failed migration down for project %s: %w", baseProject, err)
 		}
 	}
@@ -591,7 +594,7 @@ func (r *Reconciler) handleProjectModeMigration(baseProject string, targetProjec
 		}
 		for _, stack := range stacks {
 			if stack != baseProject {
-				if err := r.downComposeProject(stack, false); err != nil {
+				if err := r.downComposeProjectWithContext(stack, composePath, workDir, false); err != nil {
 					return fmt.Errorf("failed to stop rolling stack %s during migration: %w", stack, err)
 				}
 			}
@@ -601,7 +604,7 @@ func (r *Reconciler) handleProjectModeMigration(baseProject string, targetProjec
 	return nil
 }
 
-func (r *Reconciler) cleanupOldStacksForApp(baseProject string, keepStack string) error {
+func (r *Reconciler) cleanupOldStacksForApp(baseProject string, keepStack string, composePath string, workDir string) error {
 	stacks, err := r.listStacksForApp(baseProject)
 	if err != nil {
 		return err
@@ -611,7 +614,7 @@ func (r *Reconciler) cleanupOldStacksForApp(baseProject string, keepStack string
 		if stack == keepStack {
 			continue
 		}
-		if err := r.downComposeProject(stack, true); err != nil {
+		if err := r.downComposeProjectWithContext(stack, composePath, workDir, true); err != nil {
 			return fmt.Errorf("failed to cleanup old stack %s: %w", stack, err)
 		}
 	}
@@ -670,12 +673,22 @@ func (r *Reconciler) hasStack(baseProject string, stackName string) (bool, error
 }
 
 func (r *Reconciler) downComposeProject(projectName string, fullCleanup bool) error {
+	return r.downComposeProjectWithContext(projectName, "", "", fullCleanup)
+}
+
+func (r *Reconciler) downComposeProjectWithContext(projectName string, composePath string, workDir string, fullCleanup bool) error {
 	args := []string{"compose", "-p", projectName, "down", "--remove-orphans"}
+	if strings.TrimSpace(composePath) != "" {
+		args = append(args, "-f", composePath)
+	}
 	if fullCleanup {
 		args = append(args, "--volumes", "--rmi", "all")
 	}
 
 	cmd := exec.Command("docker", args...)
+	if strings.TrimSpace(workDir) != "" {
+		cmd.Dir = workDir
+	}
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 
