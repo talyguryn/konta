@@ -232,9 +232,8 @@ func Bootstrap(args []string) error {
 			RollingHealthTimeoutSeconds: 300,
 			RollingHealthRetries:        1,
 			SelfHeal: types.SelfHealConf{
-				Enable:       true,
-				MaxRetry:     0,
-				RecoveryMode: "state",
+				Enable:   true,
+				MaxRetry: 0,
 			},
 			GitHubDeployments: types.GitHubDeploymentsConf{
 				Enable:      true,
@@ -348,9 +347,8 @@ func installInteractive() error {
 			RollingHealthTimeoutSeconds: 300,
 			RollingHealthRetries:        1,
 			SelfHeal: types.SelfHealConf{
-				Enable:       true,
-				MaxRetry:     0,
-				RecoveryMode: "state",
+				Enable:   true,
+				MaxRetry: 0,
 			},
 			GitHubDeployments: types.GitHubDeploymentsConf{
 				Enable:      true,

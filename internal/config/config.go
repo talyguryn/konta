@@ -57,9 +57,8 @@ func Load() (*types.Config, error) {
 			RollingHealthTimeoutSeconds: 300,
 			RollingHealthRetries:        1,
 			SelfHeal: types.SelfHealConf{
-				Enable:       true,
-				MaxRetry:     0,
-				RecoveryMode: "state",
+				Enable:   true,
+				MaxRetry: 0,
 			},
 			GitHubDeployments: types.GitHubDeploymentsConf{
 				Enable:      true,
@@ -104,7 +103,8 @@ func Load() (*types.Config, error) {
 	case "", "state":
 		config.Deploy.SelfHeal.RecoveryMode = "state"
 	case "current_on_missing", "current":
-		config.Deploy.SelfHeal.RecoveryMode = mode
+		logger.Warn("deploy.self_heal.recovery_mode=%q is deprecated and ignored; Konta now repairs unchanged applications strictly from project state", mode)
+		config.Deploy.SelfHeal.RecoveryMode = "state"
 	default:
 		logger.Warn("Invalid deploy.self_heal.recovery_mode=%q, using default 'state'", config.Deploy.SelfHeal.RecoveryMode)
 		config.Deploy.SelfHeal.RecoveryMode = "state"
