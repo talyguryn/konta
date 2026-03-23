@@ -201,7 +201,11 @@ func (r *Reconciler) HealthCheck() ([]string, error) {
 			continue
 		}
 
-		logger.Debug("Health check target for project %s: stack=%s commit=%s source=current release", project, targetProjectName, shortCommitFrom(expectedCommit))
+		targetSource := "current fallback"
+		if hasProjectCommit {
+			targetSource = "project state"
+		}
+		logger.Debug("Health check target for project %s: stack=%s commit=%s source=%s", project, targetProjectName, shortCommitFrom(expectedCommit), targetSource)
 
 		// Fully missing → full reconcile (handles rolling naming correctly)
 		if !r.hasAnyContainersForStack(targetProjectName) {
@@ -981,6 +985,16 @@ func shortCommitFrom(commit string) string {
 }
 
 func (r *Reconciler) resolveExpectedCommitForProject(project string) (string, bool, error) {
+	projectCommit, err := state.GetProjectLastCommit(project)
+	if err != nil {
+		return "", false, err
+	}
+
+	projectCommit = strings.TrimSpace(projectCommit)
+	if projectCommit != "" {
+		return projectCommit, true, nil
+	}
+
 	return strings.TrimSpace(r.deployCommit), false, nil
 }
 
