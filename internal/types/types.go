@@ -34,7 +34,7 @@ type DeployConf struct {
 type SelfHealConf struct {
 	Enable       bool   `yaml:"enable,omitempty"`        // default: true
 	MaxRetry     int    `yaml:"max_retry,omitempty"`     // default: 0 (no limit)
-	RecoveryMode string `yaml:"recovery_mode,omitempty"` // state (default), current_on_missing, current
+	RecoveryMode string `yaml:"recovery_mode,omitempty"` // state (default), current_on_missing, current; applied only when project is unhealthy
 }
 
 type GitHubDeploymentsConf struct {

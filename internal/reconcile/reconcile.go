@@ -176,10 +176,6 @@ func (r *Reconciler) HealthCheck() ([]string, error) {
 
 	logger.Debug("Checking health of %d desired projects", len(desired))
 
-	if err := r.disableOutdatedManagedStacks(desired); err != nil {
-		logger.Warn("Failed to disable outdated managed stacks before health check: %v", err)
-	}
-
 	// Track which projects were started
 	startedProjects := []string{}
 
@@ -187,12 +183,11 @@ func (r *Reconciler) HealthCheck() ([]string, error) {
 	// Also recover projects whose containers were fully removed (e.g. a rolling
 	// stack wiped by a previous bug or manual intervention).
 	for _, project := range desired {
-		expectedCommit, targetSource, syncStateAfterHeal, err := r.resolveExpectedCommitForProject(project)
+		expectedCommit, targetSource, _, err := r.resolveExpectedCommitForProject(project)
 		if err != nil {
 			logger.Warn("Failed to resolve expected commit for project %s: %v", project, err)
 			expectedCommit = r.deployCommit
 			targetSource = "current fallback (resolver error)"
-			syncStateAfterHeal = false
 		}
 
 		projectAppsDir := r.appsDirForCommit(expectedCommit)
@@ -207,15 +202,31 @@ func (r *Reconciler) HealthCheck() ([]string, error) {
 		// Fully missing → full reconcile (handles rolling naming correctly)
 		if !r.hasAnyContainersForStack(targetProjectName) {
 			if !r.allowSelfHealAttempt(project, "containers are missing") {
+				logger.Debug("Health check decision for project %s: status=unhealthy reason=containers are missing action=skip (retry/config gate)", project)
 				continue
 			}
 			r.recordSelfHealAttempt(project, "containers are missing")
 
+			healCommit, healSource, syncStateAfterHeal, resolveErr := r.resolveRecoveryCommitForProject(project, expectedCommit, targetProjectName)
+			if resolveErr != nil {
+				logger.Warn("Failed to resolve recovery commit for project %s: %v", project, resolveErr)
+				healCommit = expectedCommit
+				healSource = "project state fallback (resolver error)"
+				syncStateAfterHeal = false
+			}
+			healAppsDir := r.appsDirForCommit(healCommit)
+			healStackName, _, stackErr := r.resolveTargetProjectName(project, healCommit, healAppsDir)
+			if stackErr != nil {
+				logger.Warn("Failed to resolve recovery stack for project %s: %v", project, stackErr)
+				healStackName = targetProjectName
+			}
+			logger.Debug("Health check decision for project %s: status=unhealthy reason=containers are missing action=full_reconcile recovery_stack=%s recovery_commit=%s recovery_source=%s", project, healStackName, shortCommitFrom(healCommit), healSource)
+
 			logger.Info("Project %s has no containers, running full reconcile to restore it", project)
-			if err := r.reconcileProjectWithContext(project, expectedCommit, projectAppsDir); err != nil {
+			if err := r.reconcileProjectWithContext(project, healCommit, healAppsDir); err != nil {
 				logger.Warn("Failed to restore project %s: %v", project, err)
 			} else {
-				r.finalizeSelfHealSuccess(project, expectedCommit, syncStateAfterHeal)
+				r.finalizeSelfHealSuccess(project, healCommit, syncStateAfterHeal)
 				startedProjects = append(startedProjects, project)
 			}
 			continue
@@ -229,16 +240,32 @@ func (r *Reconciler) HealthCheck() ([]string, error) {
 
 		if hasStoppedContainers {
 			if !r.allowSelfHealAttempt(project, "stopped containers") {
+				logger.Debug("Health check decision for project %s: status=unhealthy reason=stopped containers action=skip (retry/config gate)", project)
 				continue
 			}
 			r.recordSelfHealAttempt(project, "stopped containers")
 
+			healCommit, healSource, syncStateAfterHeal, resolveErr := r.resolveRecoveryCommitForProject(project, expectedCommit, targetProjectName)
+			if resolveErr != nil {
+				logger.Warn("Failed to resolve recovery commit for project %s: %v", project, resolveErr)
+				healCommit = expectedCommit
+				healSource = "project state fallback (resolver error)"
+				syncStateAfterHeal = false
+			}
+			healAppsDir := r.appsDirForCommit(healCommit)
+			healStackName, _, stackErr := r.resolveTargetProjectName(project, healCommit, healAppsDir)
+			if stackErr != nil {
+				logger.Warn("Failed to resolve recovery stack for project %s: %v", project, stackErr)
+				healStackName = targetProjectName
+			}
+			logger.Debug("Health check decision for project %s: status=unhealthy reason=stopped containers action=start recovery_stack=%s recovery_commit=%s recovery_source=%s", project, healStackName, shortCommitFrom(healCommit), healSource)
+
 			logger.Info("Project %s has stopped containers, starting them", project)
-			if err := r.startProjectWithContext(project, expectedCommit, projectAppsDir); err != nil {
+			if err := r.startProjectWithContext(project, healCommit, healAppsDir); err != nil {
 				logger.Warn("Failed to start project %s: %v", project, err)
 				// Don't return error, just warn - let other projects continue
 			} else {
-				r.finalizeSelfHealSuccess(project, expectedCommit, syncStateAfterHeal)
+				r.finalizeSelfHealSuccess(project, healCommit, syncStateAfterHeal)
 				startedProjects = append(startedProjects, project)
 			}
 			continue
@@ -252,15 +279,31 @@ func (r *Reconciler) HealthCheck() ([]string, error) {
 
 		if hasUnhealthyContainers {
 			if !r.allowSelfHealAttempt(project, "unhealthy containers") {
+				logger.Debug("Health check decision for project %s: status=unhealthy reason=unhealthy containers action=skip (retry/config gate)", project)
 				continue
 			}
 			r.recordSelfHealAttempt(project, "unhealthy containers")
 
+			healCommit, healSource, syncStateAfterHeal, resolveErr := r.resolveRecoveryCommitForProject(project, expectedCommit, targetProjectName)
+			if resolveErr != nil {
+				logger.Warn("Failed to resolve recovery commit for project %s: %v", project, resolveErr)
+				healCommit = expectedCommit
+				healSource = "project state fallback (resolver error)"
+				syncStateAfterHeal = false
+			}
+			healAppsDir := r.appsDirForCommit(healCommit)
+			healStackName, _, stackErr := r.resolveTargetProjectName(project, healCommit, healAppsDir)
+			if stackErr != nil {
+				logger.Warn("Failed to resolve recovery stack for project %s: %v", project, stackErr)
+				healStackName = targetProjectName
+			}
+			logger.Debug("Health check decision for project %s: status=unhealthy reason=unhealthy containers action=full_reconcile recovery_stack=%s recovery_commit=%s recovery_source=%s", project, healStackName, shortCommitFrom(healCommit), healSource)
+
 			logger.Warn("Project %s has unhealthy containers, running full reconcile", project)
-			if err := r.reconcileProjectWithContext(project, expectedCommit, projectAppsDir); err != nil {
+			if err := r.reconcileProjectWithContext(project, healCommit, healAppsDir); err != nil {
 				logger.Warn("Failed to recover unhealthy project %s: %v", project, err)
 			} else {
-				r.finalizeSelfHealSuccess(project, expectedCommit, syncStateAfterHeal)
+				r.finalizeSelfHealSuccess(project, healCommit, syncStateAfterHeal)
 				startedProjects = append(startedProjects, project)
 			}
 			continue
@@ -274,21 +317,37 @@ func (r *Reconciler) HealthCheck() ([]string, error) {
 
 		if hasDrift {
 			if !r.allowSelfHealAttempt(project, fmt.Sprintf("deployment drift: %s", driftReason)) {
+				logger.Debug("Health check decision for project %s: status=unhealthy reason=deployment drift action=skip (retry/config gate)", project)
 				continue
 			}
 			r.recordSelfHealAttempt(project, fmt.Sprintf("deployment drift: %s", driftReason))
 
+			healCommit, healSource, syncStateAfterHeal, resolveErr := r.resolveRecoveryCommitForProject(project, expectedCommit, targetProjectName)
+			if resolveErr != nil {
+				logger.Warn("Failed to resolve recovery commit for project %s: %v", project, resolveErr)
+				healCommit = expectedCommit
+				healSource = "project state fallback (resolver error)"
+				syncStateAfterHeal = false
+			}
+			healAppsDir := r.appsDirForCommit(healCommit)
+			healStackName, _, stackErr := r.resolveTargetProjectName(project, healCommit, healAppsDir)
+			if stackErr != nil {
+				logger.Warn("Failed to resolve recovery stack for project %s: %v", project, stackErr)
+				healStackName = targetProjectName
+			}
+			logger.Debug("Health check decision for project %s: status=unhealthy reason=deployment drift action=full_reconcile recovery_stack=%s recovery_commit=%s recovery_source=%s", project, healStackName, shortCommitFrom(healCommit), healSource)
+
 			logger.Warn("Project %s has deployment drift (%s), running full reconcile", project, driftReason)
-			if err := r.reconcileProjectWithContext(project, expectedCommit, projectAppsDir); err != nil {
+			if err := r.reconcileProjectWithContext(project, healCommit, healAppsDir); err != nil {
 				logger.Warn("Failed to recover drifted project %s: %v", project, err)
 			} else {
-				r.finalizeSelfHealSuccess(project, expectedCommit, syncStateAfterHeal)
+				r.finalizeSelfHealSuccess(project, healCommit, syncStateAfterHeal)
 				startedProjects = append(startedProjects, project)
 			}
 			continue
 		}
 
-		logger.Debug("Project %s matches expected stack %s and needs no healing", project, targetProjectName)
+		logger.Debug("Health check decision for project %s: status=healthy reason=none action=none expected_stack=%s expected_commit=%s source=%s", project, targetProjectName, shortCommitFrom(expectedCommit), targetSource)
 	}
 
 	// Remove orphan projects (only Konta-managed ones with konta.managed=true label)
@@ -1003,6 +1062,16 @@ func (r *Reconciler) resolveExpectedCommitForProject(project string) (string, st
 
 	projectCommit = strings.TrimSpace(projectCommit)
 	currentCommit := strings.TrimSpace(r.deployCommit)
+	if projectCommit != "" {
+		return projectCommit, "project state", false, nil
+	}
+
+	return currentCommit, "current fallback (no project state)", false, nil
+}
+
+func (r *Reconciler) resolveRecoveryCommitForProject(project string, stateCommit string, stateTargetStack string) (string, string, bool, error) {
+	currentCommit := strings.TrimSpace(r.deployCommit)
+	stateCommit = strings.TrimSpace(stateCommit)
 	mode := strings.ToLower(strings.TrimSpace(r.config.Deploy.SelfHeal.RecoveryMode))
 	if mode == "" {
 		mode = "state"
@@ -1010,28 +1079,35 @@ func (r *Reconciler) resolveExpectedCommitForProject(project string) (string, st
 
 	switch mode {
 	case "current":
-		syncState := projectCommit == "" || projectCommit != currentCommit
+		syncState := currentCommit != "" && stateCommit != currentCommit
+		if currentCommit == "" {
+			return stateCommit, "project state fallback (empty current commit)", false, nil
+		}
 		return currentCommit, "current release", syncState, nil
 	case "current_on_missing":
-		if projectCommit == "" {
+		if stateCommit == "" {
+			if currentCommit == "" {
+				return "", "unresolved (no state and no current)", false, fmt.Errorf("cannot resolve recovery commit: state and current commit are empty")
+			}
 			return currentCommit, "current_on_missing (no project state)", true, nil
 		}
 
-		projectAppsDir := r.appsDirForCommit(projectCommit)
-		stateTargetStack, _, stackErr := r.resolveTargetProjectName(project, projectCommit, projectAppsDir)
-		if stackErr != nil {
-			logger.Warn("Failed to resolve state target stack for project %s in current_on_missing mode: %v", project, stackErr)
-			return currentCommit, "current_on_missing (state target resolve failed)", true, nil
-		}
-
 		if r.hasAnyContainersForStack(stateTargetStack) {
-			return projectCommit, "project state", false, nil
+			return stateCommit, "project state", false, nil
 		}
 
-		return currentCommit, "current_on_missing (state stack missing)", true, nil
+		if currentCommit == "" {
+			return stateCommit, "project state fallback (empty current commit)", false, nil
+		}
+
+		syncState := stateCommit != currentCommit
+		return currentCommit, "current_on_missing (state stack missing)", syncState, nil
 	default:
-		if projectCommit != "" {
-			return projectCommit, "project state", false, nil
+		if stateCommit != "" {
+			return stateCommit, "project state", false, nil
+		}
+		if currentCommit == "" {
+			return "", "unresolved (no state and no current)", false, fmt.Errorf("cannot resolve recovery commit: state and current commit are empty")
 		}
 		return currentCommit, "current fallback (no project state)", false, nil
 	}

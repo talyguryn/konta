@@ -234,7 +234,7 @@ Konta manages only containers with label `konta.managed=true` in docker-compose 
 
 If you add the label `konta.rolling=true` to a service, Konta deploys that project in rolling mode using a commit-suffixed Compose project name. The new stack is started first, health-checked, and only then are old stacks removed.
 
-Even when there are no new commits, Konta performs a health check cycle and can self-heal drift: if expected stack naming (by commit) or managed service list no longer matches the Compose definition, Konta runs full reconcile for that project.
+Even when there are no new commits, Konta performs a health check cycle and can self-heal drift: if expected stack naming (by commit in state.json) or managed service list no longer matches the Compose definition, Konta runs full reconcile for that project.
 
 If `konta.rolling=true` is not present, Konta uses the stable Compose project name and performs a restart-style deployment: an existing stack is brought down first and then started again. This avoids host port conflicts when the same project binds fixed ports on the VPS.
 
@@ -320,16 +320,17 @@ repository:
 # self_heal controls automatic recovery during no-change health checks.
 # enable=true (default) allows auto-reconcile when drift/unhealthy/missing containers are detected.
 # max_retry limits self-heal attempts per project (0 = no limit).
-# recovery_mode controls which commit self-heal restores:
+# recovery_mode controls which commit self-heal uses when a project is unhealthy:
 # - state (default): restore project from commit stored in state.json
-# - current_on_missing: use state commit when expected stack exists, otherwise restore from current release and sync state
-# - current: always restore from current release and sync state
+# - current_on_missing: use state commit when expected state stack exists, otherwise restore from current release and sync state
+# - current: restore from current release and sync state
+# Health evaluation still uses state.json as baseline; healthy projects are not upgraded by health-check.
 # github_deployments enables built-in GitHub Deployment statuses, commit statuses,
 # and failure comments on the failed commit with reason + compare link.
 # Uses repository.url + repository.token. The environment defaults to production.
 deploy:
   project_name_hash_mode: rolling_only
-  rolling_health_timeout_second: 20
+  rolling_health_timeout_second: 300
   rolling_health_retries: 1
   self_heal:
     enable: true
