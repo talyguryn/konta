@@ -66,6 +66,11 @@ func Command(args ...string) *exec.Cmd {
 	return defaultClient.Command(args...)
 }
 
+// NewClient returns a docker client implementation that resolves docker binary path once.
+func NewClient() Client {
+	return client{}
+}
+
 // ComposeCommand creates an exec.Cmd for `docker compose` using a resolved absolute docker path.
 func ComposeCommand(args ...string) *exec.Cmd {
 	return defaultClient.ComposeCommand(args...)
