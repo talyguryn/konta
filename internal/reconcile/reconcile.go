@@ -837,11 +837,14 @@ func (r *Reconciler) downComposeProjectWithContext(projectName string, composePa
 	if strings.TrimSpace(workDir) != "" {
 		cmd.Dir = workDir
 	}
-	cmd.Stdout = os.Stderr
-	cmd.Stderr = os.Stderr
 
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("docker compose down failed for %s: %w", projectName, err)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		details := strings.TrimSpace(string(output))
+		if details == "" {
+			return fmt.Errorf("docker compose down failed for %s: %w", projectName, err)
+		}
+		return fmt.Errorf("docker compose down failed for %s: %w\nOutput: %s", projectName, err, details)
 	}
 
 	return nil

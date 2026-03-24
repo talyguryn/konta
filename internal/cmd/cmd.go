@@ -954,6 +954,43 @@ func runPostUpdateHook() {
 	os.Stderr = oldStderr
 }
 
+func isDaemonCurrentlyRunning() bool {
+	serviceName, _ := daemonServicePaths()
+
+	if runtime.GOOS == "darwin" {
+		statusCmd := exec.Command("launchctl", "print", "system/"+serviceName)
+		return statusCmd.Run() == nil
+	}
+
+	statusCmd := exec.Command("systemctl", "is-active", serviceName)
+	return statusCmd.Run() == nil
+}
+
+func restartDaemonForCurrentOS() error {
+	serviceName, _ := daemonServicePaths()
+
+	if runtime.GOOS == "darwin" {
+		// Preferred launchd restart path.
+		if err := exec.Command("launchctl", "kickstart", "-k", "system/"+serviceName).Run(); err == nil {
+			return nil
+		}
+
+		// Fallback for environments where kickstart is unavailable.
+		_ = exec.Command("launchctl", "stop", serviceName).Run()
+		if err := exec.Command("launchctl", "start", serviceName).Run(); err != nil {
+			return fmt.Errorf("failed to restart launchd service %s: %w", serviceName, err)
+		}
+		return nil
+	}
+
+	restartCmd := exec.Command("systemctl", "restart", serviceName)
+	if err := restartCmd.Run(); err != nil {
+		return fmt.Errorf("failed to restart systemd service %s: %w", serviceName, err)
+	}
+
+	return nil
+}
+
 func autoUpdate(currentVersion string, release *githubRelease) error {
 	latestVersion := strings.TrimPrefix(release.TagName, "v")
 	if latestVersion == currentVersion {
@@ -974,16 +1011,13 @@ func autoUpdate(currentVersion string, release *githubRelease) error {
 	runPostUpdateHook()
 
 	// Check if daemon is running
-	statusCmd := exec.Command("systemctl", "is-active", "konta")
-	err := statusCmd.Run()
-	isDaemonRunning := err == nil
+	isDaemonRunning := isDaemonCurrentlyRunning()
 
 	if isDaemonRunning {
 		logger.Info("Auto-update complete: v%s installed. Restarting daemon...", latestVersion)
 
 		// Restart the daemon automatically
-		restartCmd := exec.Command("systemctl", "restart", "konta")
-		if err := restartCmd.Run(); err != nil {
+		if err := restartDaemonForCurrentOS(); err != nil {
 			logger.Warn("Failed to restart daemon after auto-update: %v", err)
 			logger.Info("Please restart manually: sudo konta restart")
 		} else {
@@ -1054,9 +1088,7 @@ func Update(currentVersion string, forceYes bool, releaseChannelOverride string)
 	runPostUpdateHook()
 
 	// Check if daemon is running and restart it
-	statusCmd := exec.Command("systemctl", "is-active", "konta")
-	err = statusCmd.Run()
-	isDaemonRunning := err == nil
+	isDaemonRunning := isDaemonCurrentlyRunning()
 
 	if isDaemonRunning {
 		fmt.Println("\nDaemon is running. Attempting automatic restart to apply new version...")
@@ -1067,8 +1099,7 @@ func Update(currentVersion string, forceYes bool, releaseChannelOverride string)
 		}
 
 		// Restart the daemon
-		restartCmd := exec.Command("systemctl", "restart", "konta")
-		if err := restartCmd.Run(); err != nil {
+		if err := restartDaemonForCurrentOS(); err != nil {
 			fmt.Printf("⚠  Failed to restart daemon: %v\n", err)
 			fmt.Println("Restart manually with: sudo konta restart")
 			return nil
