@@ -844,6 +844,10 @@ func (r *Reconciler) downComposeProjectWithContext(projectName string, composePa
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		details := strings.TrimSpace(string(output))
+		cmdLine := strings.TrimSpace(strings.Join(cmd.Args, " "))
+		if cmdLine != "" {
+			details = strings.TrimSpace(strings.TrimSpace(details) + "\nCommand: " + cmdLine)
+		}
 		if strings.Contains(details, "unknown shorthand flag: 'p' in -p") {
 			details += "\nHint: daemon likely runs an outdated binary path for docker compose invocation. Disable auto-update temporarily and reinstall/restart Konta from the current build."
 		}

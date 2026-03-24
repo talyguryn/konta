@@ -14,9 +14,19 @@ type Client interface {
 
 type client struct{}
 
+type composeMode int
+
+const (
+	composeViaDocker composeMode = iota
+	composeViaStandalone
+)
+
 var (
 	resolvedDockerPath string
 	resolveOnce        sync.Once
+	resolvedComposeBin string
+	resolveComposeOnce sync.Once
+	resolvedComposeVia composeMode
 	defaultClient      Client = client{}
 )
 
@@ -61,6 +71,54 @@ func resolveDockerPath() {
 	resolvedDockerPath = "docker"
 }
 
+func resolveComposePath() {
+	resolveOnce.Do(resolveDockerPath)
+
+	// Prefer native `docker compose` when supported by the resolved docker CLI.
+	if err := exec.Command(resolvedDockerPath, "compose", "version").Run(); err == nil {
+		resolvedComposeVia = composeViaDocker
+		resolvedComposeBin = resolvedDockerPath
+		return
+	}
+
+	if path, err := exec.LookPath("docker-compose"); err == nil {
+		resolvedComposeVia = composeViaStandalone
+		resolvedComposeBin = path
+		return
+	}
+
+	candidates := []string{
+		"/usr/local/bin/docker-compose",
+		"/opt/homebrew/bin/docker-compose",
+		"/usr/bin/docker-compose",
+		"/bin/docker-compose",
+	}
+
+	if sudoUser := os.Getenv("SUDO_USER"); sudoUser != "" {
+		candidates = append(candidates, filepath.Join("/Users", sudoUser, ".docker", "cli-plugins", "docker-compose"))
+	}
+
+	if user := os.Getenv("USER"); user != "" {
+		candidates = append(candidates, filepath.Join("/Users", user, ".docker", "cli-plugins", "docker-compose"))
+	}
+
+	if home := os.Getenv("HOME"); home != "" {
+		candidates = append(candidates, filepath.Join(home, ".docker", "cli-plugins", "docker-compose"))
+	}
+
+	for _, candidate := range candidates {
+		if fi, err := os.Stat(candidate); err == nil && !fi.IsDir() {
+			resolvedComposeVia = composeViaStandalone
+			resolvedComposeBin = candidate
+			return
+		}
+	}
+
+	// Last resort: keep using `docker compose` for backward compatibility.
+	resolvedComposeVia = composeViaDocker
+	resolvedComposeBin = resolvedDockerPath
+}
+
 // Command creates an exec.Cmd for docker using a resolved absolute path when possible.
 func Command(args ...string) *exec.Cmd {
 	return defaultClient.Command(args...)
@@ -82,9 +140,19 @@ func (client) Command(args ...string) *exec.Cmd {
 }
 
 func (runner client) ComposeCommand(args ...string) *exec.Cmd {
+	resolveComposeOnce.Do(resolveComposePath)
+
+	if resolvedComposeVia == composeViaStandalone {
+		if len(args) > 0 && args[0] == "compose" {
+			args = args[1:]
+		}
+		return exec.Command(resolvedComposeBin, args...)
+	}
+
 	if len(args) > 0 && args[0] == "compose" {
 		return runner.Command(args...)
 	}
+
 	composeArgs := append([]string{"compose"}, args...)
 	return runner.Command(composeArgs...)
 }
