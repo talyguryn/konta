@@ -2,7 +2,6 @@ package logger
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -155,11 +154,22 @@ func logMessage(level, message string) {
 
 	timestamp := time.Now().Format("2006-01-02 15:04:05")
 	formattedMsg := fmt.Sprintf("[%s] [%s] %s", timestamp, level, message)
+	stdoutIsTTY := isStdoutTerminal()
 
-	fmt.Println(formattedMsg)
+	// Avoid duplicate lines when daemon stdout is redirected to the same file.
+	if stdoutIsTTY || logFile == nil {
+		fmt.Println(formattedMsg)
+	}
 
 	if logFile != nil {
-		log.SetOutput(logFile)
-		log.Println(formattedMsg)
+		_, _ = logFile.WriteString(formattedMsg + "\n")
 	}
+}
+
+func isStdoutTerminal() bool {
+	fi, err := os.Stdout.Stat()
+	if err != nil {
+		return false
+	}
+	return (fi.Mode() & os.ModeCharDevice) != 0
 }

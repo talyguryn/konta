@@ -2465,6 +2465,11 @@ func daemonEnable(serviceName, serviceFile string) error {
 		<string>run</string>
 		<string>--watch</string>
 	</array>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Applications/Docker.app/Contents/Resources/bin</string>
+	</dict>
 	<key>RunAtLoad</key>
 	<true/>
 	<key>KeepAlive</key>
@@ -2486,6 +2491,7 @@ func daemonEnable(serviceName, serviceFile string) error {
 		if err := os.WriteFile(serviceFile, []byte(plistContent), 0644); err != nil {
 			return fmt.Errorf("failed to write plist file: %w", err)
 		}
+		_ = exec.Command("launchctl", "unload", "-w", serviceFile).Run()
 		loadCmd := exec.Command("launchctl", "load", "-w", serviceFile)
 		if out, err := loadCmd.CombinedOutput(); err != nil {
 			return fmt.Errorf("failed to load launchd service: %w (output: %s)", err, strings.TrimSpace(string(out)))
