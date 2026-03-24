@@ -1,5 +1,7 @@
 ![konta logo](./docs/assets/konta-cover.png)
 
+[![Hypercommit](https://img.shields.io/badge/Hypercommit-DB2475)](https://hypercommit.com/konta)
+
 # Konta
 
 **Lightweight GitOps for Docker Compose.**
