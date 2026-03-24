@@ -844,6 +844,9 @@ func (r *Reconciler) downComposeProjectWithContext(projectName string, composePa
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		details := strings.TrimSpace(string(output))
+		if strings.Contains(details, "unknown shorthand flag: 'p' in -p") {
+			details += "\nHint: daemon likely runs an outdated binary path for docker compose invocation. Disable auto-update temporarily and reinstall/restart Konta from the current build."
+		}
 		if details == "" {
 			return fmt.Errorf("docker compose down failed for %s: %w", projectName, err)
 		}

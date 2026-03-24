@@ -82,6 +82,9 @@ func (client) Command(args ...string) *exec.Cmd {
 }
 
 func (runner client) ComposeCommand(args ...string) *exec.Cmd {
+	if len(args) > 0 && args[0] == "compose" {
+		return runner.Command(args...)
+	}
 	composeArgs := append([]string{"compose"}, args...)
 	return runner.Command(composeArgs...)
 }
