@@ -27,6 +27,7 @@ type DeployConf struct {
 	ProjectNameHashMode         string                `yaml:"project_name_hash_mode,omitempty"`        // rolling_only (default), all, none
 	RollingHealthTimeoutSeconds int                   `yaml:"rolling_health_timeout_second,omitempty"` // default: 300
 	RollingHealthRetries        int                   `yaml:"rolling_health_retries,omitempty"`        // default: 1
+	AutoCreateExternalNetworks  *bool                 `yaml:"auto_create_external_networks,omitempty"` // default: true
 	SelfHeal                    SelfHealConf          `yaml:"self_heal,omitempty"`
 	GitHubDeployments           GitHubDeploymentsConf `yaml:"github_deployments,omitempty"`
 	// RemoveOrphans is always enabled by default to keep disk space clean
@@ -73,6 +74,7 @@ type State struct {
 	LastAttemptTime     string                  `json:"last_attempt_time,omitempty"`
 	Version             string                  `json:"version"`
 	Projects            map[string]ProjectState `json:"projects,omitempty"` // Per-project state for change detection
+	ManagedExternalNets []string                `json:"managed_external_networks,omitempty"`
 }
 
 // ProjectState represents the state of an individual project

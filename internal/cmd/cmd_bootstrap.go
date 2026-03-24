@@ -125,6 +125,7 @@ func Bootstrap(args []string) error {
 	logger.Info("✓ Repository connection successful")
 
 	// Create configuration
+	autoCreateExternalNetworks := true
 	cfg := &types.Config{
 		Version: "v1",
 		Repository: types.RepositoryConf{
@@ -138,6 +139,7 @@ func Bootstrap(args []string) error {
 			ProjectNameHashMode:         "rolling_only",
 			RollingHealthTimeoutSeconds: 300,
 			RollingHealthRetries:        1,
+			AutoCreateExternalNetworks:  &autoCreateExternalNetworks,
 			SelfHeal: types.SelfHealConf{
 				Enable:   true,
 				MaxRetry: 0,
@@ -252,6 +254,7 @@ func installInteractive() error {
 	}
 
 	// Create configuration
+	autoCreateExternalNetworks := true
 	cfg := &types.Config{
 		Version: "v1",
 		Repository: types.RepositoryConf{
@@ -265,6 +268,7 @@ func installInteractive() error {
 			ProjectNameHashMode:         "rolling_only",
 			RollingHealthTimeoutSeconds: 300,
 			RollingHealthRetries:        1,
+			AutoCreateExternalNetworks:  &autoCreateExternalNetworks,
 			SelfHeal: types.SelfHealConf{
 				Enable:   true,
 				MaxRetry: 0,

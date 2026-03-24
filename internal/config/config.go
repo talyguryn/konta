@@ -56,6 +56,7 @@ func Load() (*types.Config, error) {
 			ProjectNameHashMode:         "rolling_only",
 			RollingHealthTimeoutSeconds: 300,
 			RollingHealthRetries:        1,
+			AutoCreateExternalNetworks:  boolPtr(true),
 			SelfHeal: types.SelfHealConf{
 				Enable:   true,
 				MaxRetry: 0,
@@ -104,6 +105,10 @@ func Load() (*types.Config, error) {
 
 	if config.Deploy.RollingHealthRetries <= 0 {
 		config.Deploy.RollingHealthRetries = 1
+	}
+
+	if config.Deploy.AutoCreateExternalNetworks == nil {
+		config.Deploy.AutoCreateExternalNetworks = boolPtr(true)
 	}
 
 	if config.Deploy.SelfHeal.MaxRetry < 0 {
@@ -250,4 +255,8 @@ func Save(config *types.Config) error {
 
 	logger.Info("Config saved to: %s", configPath)
 	return nil
+}
+
+func boolPtr(v bool) *bool {
+	return &v
 }

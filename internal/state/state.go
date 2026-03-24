@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -353,4 +354,75 @@ func GetCurrentReleaseCommit() (string, error) {
 	}
 
 	return commit, nil
+}
+
+// AddManagedExternalNetworks registers networks that were auto-created by Konta.
+func AddManagedExternalNetworks(networks []string) error {
+	if len(networks) == 0 {
+		return nil
+	}
+
+	currentState, err := Load()
+	if err != nil {
+		return err
+	}
+
+	merged := append([]string{}, currentState.ManagedExternalNets...)
+	merged = append(merged, networks...)
+	currentState.ManagedExternalNets = uniqueSortedStrings(merged)
+
+	return Save(currentState)
+}
+
+// RemoveManagedExternalNetwork removes a network from Konta-managed network registry.
+func RemoveManagedExternalNetwork(network string) error {
+	network = strings.TrimSpace(network)
+	if network == "" {
+		return nil
+	}
+
+	currentState, err := Load()
+	if err != nil {
+		return err
+	}
+
+	if len(currentState.ManagedExternalNets) == 0 {
+		return nil
+	}
+
+	filtered := make([]string, 0, len(currentState.ManagedExternalNets))
+	for _, n := range currentState.ManagedExternalNets {
+		if strings.TrimSpace(n) == network {
+			continue
+		}
+		filtered = append(filtered, n)
+	}
+
+	currentState.ManagedExternalNets = uniqueSortedStrings(filtered)
+	return Save(currentState)
+}
+
+// ListManagedExternalNetworks returns networks previously auto-created by Konta.
+func ListManagedExternalNetworks() ([]string, error) {
+	currentState, err := Load()
+	if err != nil {
+		return nil, err
+	}
+
+	return uniqueSortedStrings(currentState.ManagedExternalNets), nil
+}
+
+func uniqueSortedStrings(items []string) []string {
+	seen := make(map[string]bool, len(items))
+	result := make([]string, 0, len(items))
+	for _, item := range items {
+		trimmed := strings.TrimSpace(item)
+		if trimmed == "" || seen[trimmed] {
+			continue
+		}
+		seen[trimmed] = true
+		result = append(result, trimmed)
+	}
+	sort.Strings(result)
+	return result
 }

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -63,6 +64,11 @@ func (r *Reconciler) SetChangedProjects(projects []string) {
 // Returns detailed information about what was updated, added, removed, etc.
 func (r *Reconciler) Reconcile() (*types.ReconcileResult, error) {
 	logger.Info("Starting reconciliation")
+	if r.autoCreateExternalNetworksEnabled() {
+		if err := r.cleanupManagedExternalNetworks(); err != nil {
+			logger.Warn("Failed to cleanup managed external networks: %v", err)
+		}
+	}
 
 	result := &types.ReconcileResult{
 		Updated: []string{},
@@ -546,6 +552,10 @@ func (r *Reconciler) reconcileProjectWithContext(project string, deployCommit st
 		return nil
 	}
 
+	if err := r.ensureExternalNetworks(composePath, project); err != nil {
+		return fmt.Errorf("failed to prepare external networks for project %s: %w", project, err)
+	}
+
 	cmd := r.docker.ComposeCommand(
 		"-p", targetProjectName,
 		"-f", composePath,
@@ -876,6 +886,294 @@ func (r *Reconciler) composeHasHealthcheck(composePath string) (bool, error) {
 	}
 	content := strings.ToLower(string(data))
 	return strings.Contains(content, "healthcheck:"), nil
+}
+
+func (r *Reconciler) ensureExternalNetworks(composePath string, project string) error {
+	networks, err := externalNetworkNamesFromCompose(composePath)
+	if err != nil {
+		return err
+	}
+	if len(networks) == 0 {
+		return nil
+	}
+
+	if !r.autoCreateExternalNetworksEnabled() {
+		logger.Debug("Auto-create external networks disabled for project %s", project)
+		return nil
+	}
+
+	created := make([]string, 0)
+
+	for _, networkName := range networks {
+		exists, err := r.dockerNetworkExists(networkName)
+		if err != nil {
+			return fmt.Errorf("failed to inspect network %s: %w", networkName, err)
+		}
+		if exists {
+			continue
+		}
+
+		logger.Warn("External network %s for project %s not found. Creating it automatically.", networkName, project)
+		createCmd := r.docker.Command("network", "create", networkName)
+		createCmd.Stdout = os.Stderr
+		createCmd.Stderr = os.Stderr
+		if err := createCmd.Run(); err != nil {
+			return fmt.Errorf("failed to create external network %s: %w", networkName, err)
+		}
+		logger.Info("Created missing external network: %s", networkName)
+		created = append(created, networkName)
+	}
+
+	if len(created) > 0 {
+		if err := state.AddManagedExternalNetworks(created); err != nil {
+			logger.Warn("Failed to persist managed external networks state: %v", err)
+		}
+	}
+
+	if err := r.cleanupManagedExternalNetworks(); err != nil {
+		logger.Warn("Failed to cleanup managed external networks: %v", err)
+	}
+
+	return nil
+}
+
+func (r *Reconciler) autoCreateExternalNetworksEnabled() bool {
+	if r.config == nil || r.config.Deploy.AutoCreateExternalNetworks == nil {
+		return true
+	}
+	return *r.config.Deploy.AutoCreateExternalNetworks
+}
+
+func (r *Reconciler) cleanupManagedExternalNetworks() error {
+	networks, err := state.ListManagedExternalNetworks()
+	if err != nil {
+		return err
+	}
+
+	for _, networkName := range networks {
+		containerCount, exists, err := r.dockerNetworkContainerCount(networkName)
+		if err != nil {
+			return err
+		}
+
+		if !exists {
+			if err := state.RemoveManagedExternalNetwork(networkName); err != nil {
+				logger.Warn("Failed to prune missing network %s from state: %v", networkName, err)
+			}
+			continue
+		}
+
+		if containerCount > 0 {
+			continue
+		}
+
+		rmCmd := r.docker.Command("network", "rm", networkName)
+		output, err := rmCmd.CombinedOutput()
+		if err != nil {
+			details := strings.ToLower(strings.TrimSpace(string(output)))
+			if strings.Contains(details, "has active endpoints") {
+				continue
+			}
+			return fmt.Errorf("failed to remove unused managed external network %s: %w (%s)", networkName, err, strings.TrimSpace(string(output)))
+		}
+
+		if err := state.RemoveManagedExternalNetwork(networkName); err != nil {
+			logger.Warn("Failed to remove network %s from state after deletion: %v", networkName, err)
+		}
+		logger.Info("Removed unused managed external network: %s", networkName)
+	}
+
+	return nil
+}
+
+func (r *Reconciler) dockerNetworkContainerCount(networkName string) (int, bool, error) {
+	cmd := r.docker.Command("network", "inspect", networkName, "--format", "{{len .Containers}}")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		details := strings.ToLower(strings.TrimSpace(string(output)))
+		if strings.Contains(details, "no such network") {
+			return 0, false, nil
+		}
+		return 0, false, fmt.Errorf("docker network inspect failed for %s: %w (%s)", networkName, err, strings.TrimSpace(string(output)))
+	}
+
+	countStr := strings.TrimSpace(string(output))
+	count, convErr := strconv.Atoi(countStr)
+	if convErr != nil {
+		return 0, true, fmt.Errorf("failed to parse container count for network %s: %w (raw=%q)", networkName, convErr, countStr)
+	}
+
+	return count, true, nil
+}
+
+func (r *Reconciler) dockerNetworkExists(networkName string) (bool, error) {
+	cmd := r.docker.Command("network", "ls", "--format", "{{.Name}}")
+	output, err := cmd.Output()
+	if err != nil {
+		return false, err
+	}
+
+	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+		if strings.TrimSpace(line) == networkName {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+func externalNetworkNamesFromCompose(composePath string) ([]string, error) {
+	data, err := os.ReadFile(composePath)
+	if err != nil {
+		return nil, err
+	}
+
+	lines := strings.Split(string(data), "\n")
+	networksStart := -1
+	for i, line := range lines {
+		if leadingIndent(line) == 0 && strings.TrimSpace(line) == "networks:" {
+			networksStart = i
+			break
+		}
+	}
+
+	if networksStart == -1 {
+		return nil, nil
+	}
+
+	result := make([]string, 0)
+	seen := make(map[string]bool)
+
+	for i := networksStart + 1; i < len(lines); {
+		line := lines[i]
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			i++
+			continue
+		}
+
+		indent := leadingIndent(line)
+		if indent == 0 {
+			break
+		}
+
+		if indent != 2 || !strings.HasSuffix(trimmed, ":") {
+			i++
+			continue
+		}
+
+		alias := strings.TrimSuffix(trimmed, ":")
+		alias = parseYAMLValue(alias)
+		if alias == "" {
+			i++
+			continue
+		}
+
+		external := false
+		name := ""
+
+		j := i + 1
+		for ; j < len(lines); j++ {
+			child := lines[j]
+			childTrimmed := strings.TrimSpace(child)
+			if childTrimmed == "" {
+				continue
+			}
+
+			childIndent := leadingIndent(child)
+			if childIndent <= 2 {
+				break
+			}
+
+			if strings.HasPrefix(childTrimmed, "name:") {
+				value := strings.TrimSpace(strings.TrimPrefix(childTrimmed, "name:"))
+				parsed := parseYAMLValue(value)
+				if parsed != "" {
+					name = parsed
+				}
+				continue
+			}
+
+			if strings.HasPrefix(childTrimmed, "external:") {
+				value := strings.TrimSpace(strings.TrimPrefix(childTrimmed, "external:"))
+				parsed := strings.ToLower(parseYAMLValue(value))
+				if parsed == "" || parsed == "true" {
+					external = true
+				}
+
+				if parsed == "" {
+					externalIndent := childIndent
+					for k := j + 1; k < len(lines); k++ {
+						nested := lines[k]
+						nestedTrimmed := strings.TrimSpace(nested)
+						if nestedTrimmed == "" {
+							continue
+						}
+
+						nestedIndent := leadingIndent(nested)
+						if nestedIndent <= externalIndent {
+							break
+						}
+
+						if strings.HasPrefix(nestedTrimmed, "name:") {
+							nestedVal := strings.TrimSpace(strings.TrimPrefix(nestedTrimmed, "name:"))
+							parsedNested := parseYAMLValue(nestedVal)
+							if parsedNested != "" {
+								name = parsedNested
+							}
+						}
+					}
+				}
+			}
+		}
+
+		if external {
+			networkName := alias
+			if name != "" {
+				networkName = name
+			}
+			if networkName != "" && !seen[networkName] {
+				seen[networkName] = true
+				result = append(result, networkName)
+			}
+		}
+
+		i = j
+	}
+
+	sort.Strings(result)
+	return result, nil
+}
+
+func leadingIndent(line string) int {
+	count := 0
+	for _, ch := range line {
+		if ch == ' ' {
+			count++
+			continue
+		}
+		if ch == '\t' {
+			count += 2
+			continue
+		}
+		break
+	}
+	return count
+}
+
+func parseYAMLValue(raw string) string {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return ""
+	}
+
+	if idx := strings.Index(value, "#"); idx >= 0 {
+		value = strings.TrimSpace(value[:idx])
+	}
+
+	value = strings.TrimSpace(value)
+	value = strings.Trim(value, `"'`)
+	return strings.TrimSpace(value)
 }
 
 func (r *Reconciler) waitForProjectHealthy(projectName string, timeoutSeconds int) error {
@@ -1488,6 +1786,10 @@ func (r *Reconciler) startProjectWithContext(project string, deployCommit string
 	if r.dryRun {
 		logger.Info("[DRY-RUN] Would start containers for project %s", project)
 		return nil
+	}
+
+	if err := r.ensureExternalNetworks(composePath, project); err != nil {
+		return fmt.Errorf("failed to prepare external networks for project %s: %w", project, err)
 	}
 
 	cmd := r.docker.ComposeCommand(
