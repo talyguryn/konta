@@ -930,10 +930,6 @@ func (r *Reconciler) ensureExternalNetworks(composePath string, project string) 
 		}
 	}
 
-	if err := r.cleanupManagedExternalNetworks(); err != nil {
-		logger.Warn("Failed to cleanup managed external networks: %v", err)
-	}
-
 	return nil
 }
 
