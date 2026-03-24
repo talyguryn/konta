@@ -7,9 +7,17 @@ import (
 	"sync"
 )
 
+type Client interface {
+	Command(args ...string) *exec.Cmd
+	ComposeCommand(args ...string) *exec.Cmd
+}
+
+type client struct{}
+
 var (
 	resolvedDockerPath string
 	resolveOnce        sync.Once
+	defaultClient      Client = client{}
 )
 
 func resolveDockerPath() {
@@ -55,6 +63,20 @@ func resolveDockerPath() {
 
 // Command creates an exec.Cmd for docker using a resolved absolute path when possible.
 func Command(args ...string) *exec.Cmd {
+	return defaultClient.Command(args...)
+}
+
+// ComposeCommand creates an exec.Cmd for `docker compose` using a resolved absolute docker path.
+func ComposeCommand(args ...string) *exec.Cmd {
+	return defaultClient.ComposeCommand(args...)
+}
+
+func (client) Command(args ...string) *exec.Cmd {
 	resolveOnce.Do(resolveDockerPath)
 	return exec.Command(resolvedDockerPath, args...)
+}
+
+func (runner client) ComposeCommand(args ...string) *exec.Cmd {
+	composeArgs := append([]string{"compose"}, args...)
+	return runner.Command(composeArgs...)
 }

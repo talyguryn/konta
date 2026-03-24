@@ -541,8 +541,7 @@ func (r *Reconciler) reconcileProjectWithContext(project string, deployCommit st
 		return nil
 	}
 
-	cmd := exec.Command(
-		"docker", "compose",
+	cmd := dockerutil.ComposeCommand(
 		"-p", targetProjectName,
 		"-f", composePath,
 		"up", "-d",
@@ -570,8 +569,7 @@ func (r *Reconciler) reconcileProjectWithContext(project string, deployCommit st
 			}
 
 			// Retry docker compose up
-			cmd = exec.Command(
-				"docker", "compose",
+			cmd = dockerutil.ComposeCommand(
 				"-p", targetProjectName,
 				"-f", composePath,
 				"up", "-d",
@@ -824,7 +822,7 @@ func (r *Reconciler) downComposeProject(projectName string, fullCleanup bool) er
 }
 
 func (r *Reconciler) downComposeProjectWithContext(projectName string, composePath string, workDir string, fullCleanup bool) error {
-	args := []string{"compose", "-p", projectName}
+	args := []string{"-p", projectName}
 	if strings.TrimSpace(composePath) != "" {
 		args = append(args, "-f", composePath)
 	}
@@ -833,7 +831,7 @@ func (r *Reconciler) downComposeProjectWithContext(projectName string, composePa
 		args = append(args, "--volumes", "--rmi", "all")
 	}
 
-	cmd := dockerutil.Command(args...)
+	cmd := dockerutil.ComposeCommand(args...)
 	if strings.TrimSpace(workDir) != "" {
 		cmd.Dir = workDir
 	}

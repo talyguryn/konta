@@ -28,6 +28,7 @@ import (
 	"github.com/talyguryn/konta/internal/hooks"
 	"github.com/talyguryn/konta/internal/lock"
 	"github.com/talyguryn/konta/internal/logger"
+	platformservice "github.com/talyguryn/konta/internal/platform/service"
 	"github.com/talyguryn/konta/internal/reconcile"
 	"github.com/talyguryn/konta/internal/state"
 	"github.com/talyguryn/konta/internal/types"
@@ -295,8 +296,7 @@ func Bootstrap(args []string) error {
 
 	fmt.Println()
 	fmt.Println("Starting daemon...")
-	svcName, svcFile := daemonServicePaths()
-	if err := daemonEnable(svcName, svcFile); err != nil {
+	if err := daemonEnable(daemonManager()); err != nil {
 		logger.Warn("Failed to auto-enable daemon: %v", err)
 		fmt.Printf("\n⚠  Could not auto-start daemon. To enable it manually, run:\n")
 		fmt.Printf("    sudo konta daemon enable\n")
@@ -410,8 +410,7 @@ func installInteractive() error {
 	fmt.Println("\nStarting daemon...")
 
 	// Automatically enable and start daemon
-	svcName, svcFile := daemonServicePaths()
-	if err := daemonEnable(svcName, svcFile); err != nil {
+	if err := daemonEnable(daemonManager()); err != nil {
 		logger.Warn("Failed to auto-enable daemon: %v", err)
 		fmt.Printf("\n⚠  Could not auto-start daemon. To enable it manually, run:\n")
 		fmt.Printf("    sudo konta daemon enable\n")
@@ -955,40 +954,11 @@ func runPostUpdateHook() {
 }
 
 func isDaemonCurrentlyRunning() bool {
-	serviceName, _ := daemonServicePaths()
-
-	if runtime.GOOS == "darwin" {
-		statusCmd := exec.Command("launchctl", "print", "system/"+serviceName)
-		return statusCmd.Run() == nil
-	}
-
-	statusCmd := exec.Command("systemctl", "is-active", serviceName)
-	return statusCmd.Run() == nil
+	return daemonManager().IsRunning()
 }
 
 func restartDaemonForCurrentOS() error {
-	serviceName, _ := daemonServicePaths()
-
-	if runtime.GOOS == "darwin" {
-		// Preferred launchd restart path.
-		if err := exec.Command("launchctl", "kickstart", "-k", "system/"+serviceName).Run(); err == nil {
-			return nil
-		}
-
-		// Fallback for environments where kickstart is unavailable.
-		_ = exec.Command("launchctl", "stop", serviceName).Run()
-		if err := exec.Command("launchctl", "start", serviceName).Run(); err != nil {
-			return fmt.Errorf("failed to restart launchd service %s: %w", serviceName, err)
-		}
-		return nil
-	}
-
-	restartCmd := exec.Command("systemctl", "restart", serviceName)
-	if err := restartCmd.Run(); err != nil {
-		return fmt.Errorf("failed to restart systemd service %s: %w", serviceName, err)
-	}
-
-	return nil
+	return daemonManager().Restart()
 }
 
 func autoUpdate(currentVersion string, release *githubRelease) error {
@@ -1672,25 +1642,23 @@ func Status(version string) error {
 	fmt.Printf("Konta version: %s\n\n", version)
 
 	// Check daemon status
-	statusCmd := exec.Command("systemctl", "is-active", "konta")
-	output, err := statusCmd.Output()
-
-	status := strings.TrimSpace(string(output))
-	if err != nil || status != "active" {
+	manager := daemonManager()
+	if !manager.IsRunning() {
 		fmt.Printf("✗ Konta daemon is not running\n")
 	} else {
 		fmt.Printf("✓ Konta daemon is running\n")
 
-		// Get uptime from systemd
-		uptimeCmd := exec.Command("systemctl", "show", "konta", "--property=ActiveEnterTimestamp")
-		if uptimeOutput, err := uptimeCmd.Output(); err == nil {
-			uptimeStr := strings.TrimSpace(string(uptimeOutput))
-			if strings.HasPrefix(uptimeStr, "ActiveEnterTimestamp=") {
-				timestampStr := strings.TrimPrefix(uptimeStr, "ActiveEnterTimestamp=")
-				// Parse timestamp and calculate uptime
-				if startTime, err := time.Parse("Mon 2006-01-02 15:04:05 MST", timestampStr); err == nil {
-					uptime := time.Since(startTime)
-					fmt.Printf("  Uptime: %s\n", formatUptime(uptime))
+		if runtime.GOOS == "linux" {
+			// Get uptime from systemd
+			uptimeCmd := exec.Command("systemctl", "show", manager.Name(), "--property=ActiveEnterTimestamp")
+			if uptimeOutput, err := uptimeCmd.Output(); err == nil {
+				uptimeStr := strings.TrimSpace(string(uptimeOutput))
+				if strings.HasPrefix(uptimeStr, "ActiveEnterTimestamp=") {
+					timestampStr := strings.TrimPrefix(uptimeStr, "ActiveEnterTimestamp=")
+					if startTime, err := time.Parse("Mon 2006-01-02 15:04:05 MST", timestampStr); err == nil {
+						uptime := time.Since(startTime)
+						fmt.Printf("  Uptime: %s\n", formatUptime(uptime))
+					}
 				}
 			}
 		}
@@ -2442,228 +2410,84 @@ func listDesiredProjectsForStatePrune(appsDir string) ([]string, error) {
 }
 
 // daemonServicePaths returns the OS-appropriate service name and service file path.
-func daemonServicePaths() (serviceName, serviceFile string) {
-	if runtime.GOOS == "darwin" {
-		return "com.talyguryn.konta", "/Library/LaunchDaemons/com.talyguryn.konta.plist"
+func daemonManager() platformservice.Manager {
+	binaryPath, err := os.Executable()
+	if err != nil || strings.TrimSpace(binaryPath) == "" {
+		binaryPath = "/usr/local/bin/konta"
 	}
-	return "konta", "/etc/systemd/system/konta.service"
+	return platformservice.NewManager(binaryPath)
 }
 
 // ManageDaemon manages the system daemon (systemd on Linux, launchd on macOS)
 func ManageDaemon(action string) error {
-	serviceName, serviceFile := daemonServicePaths()
+	manager := daemonManager()
 
 	switch strings.ToLower(action) {
 	case "enable":
-		return daemonEnable(serviceName, serviceFile)
+		return daemonEnable(manager)
 
 	case "disable":
-		return daemonDisable(serviceName, serviceFile)
+		return daemonDisable(manager)
 
 	case "status":
-		return daemonStatus(serviceName)
+		return daemonStatus(manager)
 
 	case "start":
 		logger.Warn("Daemon action 'start' is deprecated. Use 'enable' instead.")
-		return daemonEnable(serviceName, serviceFile)
+		return daemonEnable(manager)
 
 	case "stop":
 		logger.Warn("Daemon action 'stop' is deprecated. Use 'disable' instead.")
-		return daemonDisable(serviceName, serviceFile)
+		return daemonDisable(manager)
 
 	case "restart":
-		return daemonRestart(serviceName)
+		return daemonRestart(manager)
 
 	default:
 		return fmt.Errorf("unknown daemon action: %s (use: enable, disable, restart, status)", action)
 	}
 }
 
-func daemonEnable(serviceName, serviceFile string) error {
-	if os.Getuid() != 0 {
-		return fmt.Errorf("root privileges required to enable daemon")
-	}
-
-	if runtime.GOOS == "darwin" {
-		plistContent := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-	<key>Label</key>
-	<string>%s</string>
-	<key>ProgramArguments</key>
-	<array>
-		<string>/usr/local/bin/konta</string>
-		<string>run</string>
-		<string>--watch</string>
-	</array>
-	<key>EnvironmentVariables</key>
-	<dict>
-		<key>PATH</key>
-		<string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Applications/Docker.app/Contents/Resources/bin</string>
-	</dict>
-	<key>RunAtLoad</key>
-	<true/>
-	<key>KeepAlive</key>
-	<true/>
-	<key>StandardOutPath</key>
-	<string>/var/log/konta/konta.log</string>
-	<key>StandardErrorPath</key>
-	<string>/var/log/konta/konta.error.log</string>
-</dict>
-</plist>
-`, serviceName)
-
-		if err := os.MkdirAll("/var/log/konta", 0755); err != nil {
-			return fmt.Errorf("failed to create log directory: %w", err)
-		}
-		if err := os.MkdirAll("/Library/LaunchDaemons", 0755); err != nil {
-			return fmt.Errorf("failed to create LaunchDaemons directory: %w", err)
-		}
-		if err := os.WriteFile(serviceFile, []byte(plistContent), 0644); err != nil {
-			return fmt.Errorf("failed to write plist file: %w", err)
-		}
-		_ = exec.Command("launchctl", "unload", "-w", serviceFile).Run()
-		loadCmd := exec.Command("launchctl", "load", "-w", serviceFile)
-		if out, err := loadCmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("failed to load launchd service: %w (output: %s)", err, strings.TrimSpace(string(out)))
-		}
-		fmt.Printf("✓ Konta daemon enabled and started\n")
-		return nil
-	}
-
-	// Linux: systemd
-	serviceContent := `[Unit]
-Description=Konta GitOps for Docker Compose
-After=network.target docker.service
-Requires=docker.service
-
-[Service]
-Type=simple
-User=root
-ExecStart=/usr/local/bin/konta run --watch
-Restart=on-failure
-RestartSec=5
-StandardOutput=journal
-StandardError=journal
-KillMode=mixed
-KillSignal=SIGTERM
-TimeoutStopSec=30
-
-[Install]
-WantedBy=multi-user.target
-`
-
-	if err := os.WriteFile(serviceFile, []byte(serviceContent), 0644); err != nil {
-		return fmt.Errorf("failed to write service file: %w", err)
-	}
-	if err := exec.Command("systemctl", "daemon-reload").Run(); err != nil {
-		return fmt.Errorf("failed to reload systemd: %w", err)
-	}
-	if err := exec.Command("systemctl", "enable", serviceName).Run(); err != nil {
-		return fmt.Errorf("failed to enable service: %w", err)
-	}
-	if err := exec.Command("systemctl", "start", serviceName).Run(); err != nil {
-		return fmt.Errorf("failed to start service: %w", err)
+func daemonEnable(manager platformservice.Manager) error {
+	if err := manager.Enable(); err != nil {
+		return err
 	}
 	fmt.Printf("✓ Konta daemon enabled and started\n")
 	return nil
 }
 
-func daemonDisable(serviceName, serviceFile string) error {
-	if os.Getuid() != 0 {
-		return fmt.Errorf("root privileges required to disable daemon")
-	}
-
-	if runtime.GOOS == "darwin" {
-		// unload ignores errors if the service is not loaded
-		_ = exec.Command("launchctl", "unload", "-w", serviceFile).Run()
-		if err := os.Remove(serviceFile); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("failed to remove plist file: %w", err)
-		}
-		fmt.Printf("✓ Konta daemon disabled\n")
-		return nil
-	}
-
-	// Linux: systemd
-	if err := exec.Command("systemctl", "stop", serviceName).Run(); err != nil {
-		fmt.Printf("⚠  Failed to stop service (may not be running): %v\n", err)
-	}
-	if err := exec.Command("systemctl", "disable", serviceName).Run(); err != nil {
-		return fmt.Errorf("failed to disable service: %w", err)
-	}
-	if err := os.Remove(serviceFile); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("failed to remove service file: %w", err)
-	}
-	if err := exec.Command("systemctl", "daemon-reload").Run(); err != nil {
-		return fmt.Errorf("failed to reload systemd: %w", err)
+func daemonDisable(manager platformservice.Manager) error {
+	if err := manager.Disable(); err != nil {
+		return err
 	}
 	fmt.Printf("✓ Konta daemon disabled\n")
 	return nil
 }
 
-func daemonStatus(serviceName string) error {
-	if runtime.GOOS == "darwin" {
-		output, err := exec.Command("launchctl", "list", serviceName).Output()
-		if err != nil {
-			fmt.Printf("✗ Konta daemon is not running\n")
-			return nil
-		}
-		fmt.Printf("✓ Konta daemon is running\n")
-		fmt.Printf("%s\n", strings.TrimSpace(string(output)))
-		return nil
-	}
-
-	// Linux: systemd
-	output, err := exec.Command("systemctl", "is-active", serviceName).Output()
-	if err != nil {
+func daemonStatus(manager platformservice.Manager) error {
+	if !manager.IsRunning() {
 		fmt.Printf("✗ Konta daemon is not running\n")
 		return nil
 	}
-	status := strings.TrimSpace(string(output))
-	if status == "active" {
-		fmt.Printf("✓ Konta daemon is running\n")
-		getStatusCmd := exec.Command("systemctl", "status", serviceName, "--no-pager")
-		getStatusCmd.Stdout = os.Stdout
-		getStatusCmd.Stderr = os.Stderr
-		_ = getStatusCmd.Run()
-	} else {
-		fmt.Printf("⚠  Konta daemon is %s\n", status)
+
+	fmt.Printf("✓ Konta daemon is running\n")
+	if output, err := manager.StatusOutput(); err == nil && strings.TrimSpace(output) != "" {
+		fmt.Printf("%s\n", strings.TrimSpace(output))
 	}
 	return nil
 }
 
-func daemonStart(serviceName string) error {
-	if os.Getuid() != 0 {
-		return fmt.Errorf("root privileges required to start daemon")
-	}
-	if runtime.GOOS == "darwin" {
-		if err := exec.Command("launchctl", "start", serviceName).Run(); err != nil {
-			return fmt.Errorf("failed to start service: %w", err)
-		}
-		fmt.Printf("✓ Konta daemon started\n")
-		return nil
-	}
-	if err := exec.Command("systemctl", "start", serviceName).Run(); err != nil {
-		return fmt.Errorf("failed to start service: %w", err)
+func daemonStart(manager platformservice.Manager) error {
+	if err := manager.Start(); err != nil {
+		return err
 	}
 	fmt.Printf("✓ Konta daemon started\n")
 	return nil
 }
 
-func daemonStop(serviceName string) error {
-	if os.Getuid() != 0 {
-		return fmt.Errorf("root privileges required to stop daemon")
-	}
-	if runtime.GOOS == "darwin" {
-		if err := exec.Command("launchctl", "stop", serviceName).Run(); err != nil {
-			return fmt.Errorf("failed to stop service: %w", err)
-		}
-		fmt.Printf("✓ Konta daemon stopped\n")
-		return nil
-	}
-	if err := exec.Command("systemctl", "stop", serviceName).Run(); err != nil {
-		return fmt.Errorf("failed to stop service: %w", err)
+func daemonStop(manager platformservice.Manager) error {
+	if err := manager.Stop(); err != nil {
+		return err
 	}
 	fmt.Printf("✓ Konta daemon stopped\n")
 	return nil
@@ -2719,20 +2543,9 @@ func contains(slice []string, item string) bool {
 	return false
 }
 
-func daemonRestart(serviceName string) error {
-	if os.Getuid() != 0 {
-		return fmt.Errorf("root privileges required to restart daemon")
-	}
-	if runtime.GOOS == "darwin" {
-		_ = exec.Command("launchctl", "stop", serviceName).Run()
-		if err := exec.Command("launchctl", "start", serviceName).Run(); err != nil {
-			return fmt.Errorf("failed to restart service: %w", err)
-		}
-		fmt.Printf("✓ Konta daemon restarted\n")
-		return nil
-	}
-	if err := exec.Command("systemctl", "restart", serviceName).Run(); err != nil {
-		return fmt.Errorf("failed to restart service: %w", err)
+func daemonRestart(manager platformservice.Manager) error {
+	if err := manager.Restart(); err != nil {
+		return err
 	}
 	fmt.Printf("✓ Konta daemon restarted\n")
 	return nil
