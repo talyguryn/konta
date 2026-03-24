@@ -618,6 +618,7 @@ func CheckForUpdates(currentVersion string, updateBehavior string, releaseChanne
 	}
 
 	releaseChannel = normalizeReleaseChannel(releaseChannel)
+	channelLabel := releaseChannelScopeLabel(releaseChannel)
 
 	release, err := fetchLatestRelease(releaseChannel)
 	if err != nil {
@@ -631,7 +632,7 @@ func CheckForUpdates(currentVersion string, updateBehavior string, releaseChanne
 	}
 
 	if updateBehavior == "notify" {
-		logger.Info("New Konta version available on %s channel: v%s (current: v%s). Run 'konta update' to install.", releaseChannel, latestVersion, currentVersion)
+		logger.Info("New Konta version available on %s: v%s (current: v%s). Run 'konta update' to install.", channelLabel, latestVersion, currentVersion)
 		return nil
 	}
 
@@ -750,7 +751,7 @@ func buildGitHubErrorMessage(statusCode int, body []byte) string {
 	}
 }
 
-func fetchLatestPrerelease() (*githubRelease, error) {
+func fetchLatestAnyRelease() (*githubRelease, error) {
 	resp, err := http.Get("https://api.github.com/repos/talyguryn/konta/releases?per_page=30")
 	if err != nil {
 		return nil, fmt.Errorf("Failed to connect to GitHub - %v", err)
@@ -781,7 +782,7 @@ func fetchLatestPrerelease() (*githubRelease, error) {
 	}
 
 	for _, rel := range releases {
-		if rel.Draft || !rel.Prerelease {
+		if rel.Draft {
 			continue
 		}
 
@@ -798,12 +799,12 @@ func fetchLatestPrerelease() (*githubRelease, error) {
 		return release, nil
 	}
 
-	return nil, fmt.Errorf("No prerelease versions found on GitHub")
+	return nil, fmt.Errorf("No releases found on GitHub")
 }
 
 func fetchLatestRelease(channel string) (*githubRelease, error) {
 	if normalizeReleaseChannel(channel) == "next" {
-		return fetchLatestPrerelease()
+		return fetchLatestAnyRelease()
 	}
 
 	return fetchLatestStableRelease()
@@ -839,6 +840,13 @@ func normalizeReleaseChannel(channel string) string {
 		return "stable"
 	}
 	return "next"
+}
+
+func releaseChannelScopeLabel(channel string) string {
+	if normalizeReleaseChannel(channel) == "next" {
+		return "next (latest prerelease or stable)"
+	}
+	return "stable (latest stable only)"
 }
 
 func getBinaryName() string {
@@ -997,8 +1005,9 @@ func Update(currentVersion string, forceYes bool, releaseChannelOverride string)
 	if strings.TrimSpace(releaseChannelOverride) != "" {
 		releaseChannel = normalizeReleaseChannel(releaseChannelOverride)
 	}
+	channelLabel := releaseChannelScopeLabel(releaseChannel)
 
-	fmt.Printf("Checking for updates from GitHub (channel: %s)...\n", releaseChannel)
+	fmt.Printf("Checking for updates from GitHub (channel: %s)...\n", channelLabel)
 	fmt.Println()
 
 	release, err := fetchLatestRelease(releaseChannel)
@@ -1009,11 +1018,11 @@ func Update(currentVersion string, forceYes bool, releaseChannelOverride string)
 	latestVersion := strings.TrimPrefix(release.TagName, "v")
 
 	if latestVersion == currentVersion {
-		fmt.Printf("✓ Already running the latest version on %s channel!\n", releaseChannel)
+		fmt.Printf("✓ Already running the latest version on %s!\n", channelLabel)
 		return nil
 	}
 
-	fmt.Printf("🎉 New version available on %s channel: v%s\n", releaseChannel, latestVersion)
+	fmt.Printf("🎉 New version available on %s: v%s\n", channelLabel, latestVersion)
 
 	if !forceYes {
 		fmt.Print("Download and install? [Y/n]: ")
