@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/talyguryn/konta/internal/config"
+	"github.com/talyguryn/konta/internal/dockerutil"
 	"github.com/talyguryn/konta/internal/git"
 	"github.com/talyguryn/konta/internal/githubdeploy"
 	"github.com/talyguryn/konta/internal/hooks"
@@ -522,17 +523,17 @@ func Uninstall() error {
 
 	// 2. Stop and remove all Konta-managed containers
 	fmt.Println("2. Stopping Konta-managed containers...")
-	cmd := exec.Command("docker", "ps", "-aq", "--filter", "label=konta.managed=true")
+	cmd := dockerutil.Command("ps", "-aq", "--filter", "label=konta.managed=true")
 	output, err := cmd.Output()
 	if err == nil && len(output) > 0 {
 		containerIDs := strings.Fields(string(output))
 		if len(containerIDs) > 0 {
 			fmt.Printf("   Found %d containers\n", len(containerIDs))
-			stopCmd := exec.Command("docker", "stop")
+			stopCmd := dockerutil.Command("stop")
 			stopCmd.Args = append(stopCmd.Args, containerIDs...)
 			_ = stopCmd.Run()
 
-			rmCmd := exec.Command("docker", "rm")
+			rmCmd := dockerutil.Command("rm")
 			rmCmd.Args = append(rmCmd.Args, containerIDs...)
 			if err := rmCmd.Run(); err != nil {
 				logger.Warn("Failed to remove containers: %v", err)
@@ -2150,7 +2151,7 @@ func stateCommitsToKeep() []string {
 func mountedReleaseDirsInUse(releasesDir string) (map[string]bool, error) {
 	kept := make(map[string]bool)
 
-	listCmd := exec.Command("docker", "ps", "-aq", "--filter", "label=konta.managed=true")
+	listCmd := dockerutil.Command("ps", "-aq", "--filter", "label=konta.managed=true")
 	listOutput, err := listCmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("docker ps failed: %w", err)
@@ -2170,7 +2171,7 @@ func mountedReleaseDirsInUse(releasesDir string) (map[string]bool, error) {
 	}
 
 	inspectArgs := append([]string{"inspect"}, containerIDs...)
-	inspectCmd := exec.Command("docker", inspectArgs...)
+	inspectCmd := dockerutil.Command(inspectArgs...)
 	inspectOutput, err := inspectCmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("docker inspect failed: %w", err)
